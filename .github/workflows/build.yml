@@ -1,0 +1,75 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows-x64:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up MSYS2 (UCRT64)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: mingw-w64-ucrt-x86_64-gcc
+
+      - name: Build
+        shell: cmd
+        run: |
+          cd HyperSense
+          build.bat
+
+      - name: Verify binary
+        shell: pwsh
+        run: |
+          $exe = "HyperSense64.exe"
+          if (-not (Test-Path $exe)) { throw "build produced no executable" }
+          $item = Get-Item $exe
+          $info = $item.VersionInfo
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash
+          "size      : {0} bytes" -f $item.Length
+          "version   : {0}" -f $info.FileVersion
+          "company   : {0}" -f $info.CompanyName
+          "sha256    : {0}" -f $hash
+          if ($item.Length -lt 500000) { throw "binary looks truncated" }
+          if ($info.CompanyName -ne "HYPERSENSEGLOBAL") { throw "version resource missing" }
+
+      - name: Engine smoke test
+        shell: pwsh
+        run: |
+          # The engine is reachable through --engine; a usage error (exit 0) still proves it links.
+          & .\HyperSense64.exe --engine *> engine.log
+          Get-Content engine.log -Tail 20
+          if (-not (Select-String -Path engine.log -Pattern "HYPERSENSEGLOBAL" -Quiet)) {
+            throw "engine banner not found - embedded engine did not run"
+          }
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: HyperSense64-x64
+          path: HyperSense64.exe
+          if-no-files-found: error
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$env:GITHUB_REF_NAME" 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create "$env:GITHUB_REF_NAME" --draft --title "$env:GITHUB_REF_NAME" --generate-notes
+          }
+          gh release upload "$env:GITHUB_REF_NAME" HyperSense64.exe --clobber

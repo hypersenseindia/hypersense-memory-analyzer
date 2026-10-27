@@ -1,0 +1,53 @@
+# ---- Build output (never commit) ----
+*.exe
+*.dll
+*.lib
+*.exp
+*.pdb
+*.ilk
+*.obj
+*.o
+*.res
+*.aps
+*.tlog
+*.lastbuildstate
+*.iobj
+*.ipdb
+*.idb
+*.log
+.vs/
+x64/
+Debug/
+Release/
+*.vcxproj.user
+HyperSense/res/resource.o
+HyperSense/res/icon of HXG.ico
+
+# ---- Runtime artefacts ----
+HYPERSENSE_DUMPS/
+HyperSense/HYPERSENSE_DUMPS/
+HYPERSENSE_REPORT_*
+*.dmp
+
+# ---- Scratch from the verification scripts ----
+HyperSense/tools/*.png
+HyperSense/tools/*.txt
+HyperSense/tools/*.html
+.tmp/
+tmp/
+
+# ---- .NET helper projects under Tests/ ----
+Tests/**/bin/
+Tests/**/obj/
+
+# ---- Secrets (a signing key must never enter git) ----
+*.pfx
+*.p12
+*.pvk
+*.snk
+*.key
+*.pem
+*.cer
+*.crt
+.env
+*.token

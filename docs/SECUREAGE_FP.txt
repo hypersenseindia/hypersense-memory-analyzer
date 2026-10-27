@@ -1,0 +1,46 @@
+SecureAge "Malicious" false positive - submission notes
+======================================================
+
+Vendor : SecureAge Technology (VirusTotal engine label: "Acronis (Static ML)")
+Verdict: Malicious  (1/70 on VirusTotal, all other engines clean)
+File   : HyperSense64.exe  v1.0.1.0  x64  peexe  1,749,504 bytes (1.67 MB)
+SHA-256: 745206FD8140AD7B706E384BB9E139E57D4425BA2FBF85C270E8D937FD43DD36
+
+Where to submit
+---------------
+https://www.secureage.com/contact-us
+  -> scroll to "Submit false positive"
+  -> "Report false positive"
+  (form takes a Supporting File up to 4 MB - the exe is 1.7 MB, so upload the exe itself)
+
+Supporting File: the HyperSense64.exe that hashes to 745206FD... (do not rebuild first)
+
+Text for "Describe Your Issue"
+------------------------------
+False positive report: HyperSense64.exe - detected as "Malicious"
+
+HyperSense64.exe is a usermode memory-analysis GUI that embeds the open-source
+Moneta scanner (GPLv3, https://github.com/forrest-orr/moneta). Reading another
+process's memory is its documented function, not malicious behaviour: it uses
+OpenProcess(PROCESS_VM_READ), VirtualQueryEx, PEB/TEB reads and SeDebugPrivilege
+to map a target's regions and report suspicious memory (private executable
+pages, modified code, unsigned modules).
+
+No persistence, no services, no drivers, no autorun, no network traffic, no
+credential access, no process injection, no code written outside the report the
+user explicitly saves. The GUI starts asInvoker; elevation is opt-in via a
+button. It is statically linked, not packed, and contains no obfuscated strings.
+
+File: HyperSense64.exe v1.0.1.0 (x64, 1,749,504 bytes, 1.67 MB)
+SHA-256: 745206FD8140AD7B706E384BB9E139E57D4425BA2FBF85C270E8D937FD43DD36
+VirusTotal: 1/70 (only this engine)
+Engine source: https://github.com/forrest-orr/moneta
+
+Please reclassify this file and remove the "Malicious" detection.
+
+Notes
+-----
+* Submit the exact hash above. Any rebuild changes it and you start over.
+* Microsoft already scores this build clean; SecureAge is the only engine left.
+* 1/70 is effectively clean - reclassifying this one vendor is cosmetic, not a
+  blocker, unless your users actually run SecureAge CatchPulse.
