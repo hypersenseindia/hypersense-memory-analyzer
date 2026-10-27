@@ -35,7 +35,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
 
 ---
 
-## [1.0.0] — 2026-10-26
+## 1.0.0 — 2026-10-26
 
 ### Added
 - First GUI release: dark Win32 interface, process picker, IOC/ALL/REGION/REFERENCED
@@ -45,4 +45,3 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
 ---
 
 [1.0.1]: https://github.com/hypersenseindia/hypersense-memory-analyzer/releases/tag/v1.0.1
-[1.0.0]: https://github.com/hypersenseindia/hypersense-memory-analyzer/releases/tag/v1.0.0
