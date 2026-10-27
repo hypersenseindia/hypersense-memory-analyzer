@@ -46,14 +46,15 @@ jobs:
           if ($info.CompanyName -ne "HYPERSENSEGLOBAL") { throw "version resource missing" }
 
       - name: Engine smoke test
-        shell: pwsh
+        shell: cmd
         run: |
-          # The engine is reachable through --engine; a usage error (exit 0) still proves it links.
-          & .\HyperSense64.exe --engine *> engine.log
-          Get-Content engine.log -Tail 20
-          if (-not (Select-String -Path engine.log -Pattern "HYPERSENSEGLOBAL" -Quiet)) {
-            throw "engine banner not found - embedded engine did not run"
-          }
+          HyperSense64.exe --engine > engine.log 2>&1
+          type engine.log
+          findstr /C:"HYPERSENSEGLOBAL" engine.log >nul
+          if errorlevel 1 (
+            echo ::error::engine banner missing - the embedded scanner did not start
+            exit /b 1
+          )
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
