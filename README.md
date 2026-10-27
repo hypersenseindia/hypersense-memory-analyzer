@@ -107,15 +107,45 @@ It does not inject code, does not modify the target, does not persist anything a
 not communicate with any network endpoint. It reads memory and writes the report you ask
 for.
 
-## Credits
+## Contributors
 
-* **Moneta engine** — Forrest Orr & Gabriel Landau, GPLv3.
-  <https://github.com/forrest-orr/moneta>
-* **HYPERSENSEGLOBAL front end, branding, packaging** — AG HYDRAXFF
-  ([@hydraxff_yt](https://www.instagram.com/hydraxff_yt/))
+<table>
+  <tr>
+    <td align="center" width="170">
+      <a href="https://github.com/forrest-orr">
+        <img src="https://github.com/forrest-orr.png" width="72" alt="Forrest Orr"><br>
+        <sub><b>Forrest Orr</b></sub>
+      </a><br>
+      <sub>Moneta engine</sub>
+    </td>
+    <td align="center" width="170">
+      <a href="https://github.com/gabriellandau">
+        <img src="https://github.com/gabriellandau.png" width="72" alt="Gabriel Landau"><br>
+        <sub><b>Gabriel Landau</b></sub>
+      </a><br>
+      <sub>Moneta engine</sub>
+    </td>
+    <td align="center" width="170">
+      <a href="https://github.com/hypersenseindia">
+        <img src="https://github.com/hypersenseindia.png" width="72" alt="AG HYDRAXFF"><br>
+        <sub><b>AG HYDRAXFF</b></sub>
+      </a><br>
+      <sub>Front end &middot; branding</sub>
+    </td>
+  </tr>
+</table>
 
-All memory-analysis logic belongs to the Moneta authors. See **[NOTICE.md](NOTICE.md)** for
-the list of changes made to the engine in this build.
+* **Forrest Orr** ([@forrest-orr](https://github.com/forrest-orr)) and
+  **Gabriel Landau** ([@gabriellandau](https://github.com/gabriellandau)) wrote the
+  [Moneta](https://github.com/forrest-orr/moneta) engine — every piece of memory-analysis
+  logic in this tool. This project is a front end and packaging layer on top of their work.
+* **AG HYDRAXFF** ([@hydraxff_yt](https://www.instagram.com/hydraxff_yt/)) — GUI, build
+  system, report writers, branding, and the engine defect fixes listed in
+  [NOTICE.md](NOTICE.md).
+
+Full attribution and the change log against upstream are in
+**[docs/CONTRIBUTORS.md](docs/CONTRIBUTORS.md)** and **[NOTICE.md](NOTICE.md)**. Contributions
+of any size are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Licence
 

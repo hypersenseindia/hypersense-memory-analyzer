@@ -5,6 +5,8 @@ This repository contains a modified version of **Moneta**.
 ```
 Moneta — Live usermode memory analysis
 Copyright (C) 2020 Forrest Orr and Gabriel Landau
+  Forrest Orr     — https://github.com/forrest-orr
+  Gabriel Landau  — https://github.com/gabriellandau
 https://github.com/forrest-orr/moneta
 Licensed under the GNU General Public License v3.0
 ```
