@@ -16,7 +16,13 @@ param(
 # hash, so run this after the final build, not before.
 
 $ErrorActionPreference = "Stop"
-if (-not $Exe) { $Exe = Join-Path (Split-Path -Parent $PSScriptRoot) "HyperSense64.exe" }
+if (-not $Exe) {
+    # Prefer the signed release binary: that is what actually ships, and the hash
+    # of the pre-signing file is worthless to the vendor.
+    $signed = Join-Path (Split-Path -Parent $PSScriptRoot) "HXG SIGNED\HyperSense64 HXG SIGNED LATEST.exe"
+    $plain  = Join-Path (Split-Path -Parent $PSScriptRoot) "HyperSense64.exe"
+    if (Test-Path $signed) { $Exe = $signed } else { $Exe = $plain }
+}
 if (-not (Test-Path $Exe)) { throw "executable not found: $Exe" }
 
 $file = Get-Item $Exe
