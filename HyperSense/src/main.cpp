@@ -27,13 +27,20 @@
 
 #include <string>
 #include <vector>
+#include <deque>
 #include <sstream>
 #include <thread>
+#include <mutex>
 #include <atomic>
 #include <cstdio>
 #include <cwchar>
+#include <cwctype>
+#include <cstring>
 #include <cstdarg>
+#include <cstdint>
 #include <algorithm>
+
+#include "sha256.h"
 
 // Moneta engine entry point (Source/Console.cpp). Compiled into this executable;
 // --engine mode runs it in a hidden child process with stdout piped to the UI.
@@ -75,7 +82,14 @@ enum : int {
     HS_VERB0 = 210, HS_VERB1, HS_VERB2,
     HS_TG_STATS = 300, HS_TG_FROMBASE, HS_TG_DUMP, HS_TG_FILTERALL,
     HS_TG_UNSIGNED, HS_TG_METADATA, HS_TG_CLRHEAP, HS_TG_CLRPRVX, HS_TG_WOW64,
-    HS_TG_INSTA = 320
+    HS_TG_INSTA = 320,
+    // tabs above the output view
+    HS_TAB_OUTPUT = 400, HS_TAB_CMD, HS_TAB_DETAILS,
+    // classic (moneta64.exe) mode
+    HS_EDIT_PID = 410, HS_TG_CLASSIC, HS_TG_FOCUSUNSIGNED, HS_INFO,
+    HS_PRESET, HS_CMD,
+    // output right-click menu
+    HS_MENU_FIRST = 500
 };
 
 #define WM_HS_OUTPUT (WM_APP + 1)
@@ -96,6 +110,29 @@ HWND g_hTgStats = nullptr, g_hTgFromBase = nullptr, g_hTgDump = nullptr, g_hTgFi
 HWND g_hTgUnsigned = nullptr, g_hTgMetadata = nullptr, g_hTgClrHeap = nullptr, g_hTgClrPrvx = nullptr, g_hTgWow64 = nullptr;
 HWND g_hTgInsta = nullptr;
 
+// tabs / command view / classic mode / tooltips
+HWND g_hTab[3] = {};
+HWND g_hInfo = nullptr;
+HWND g_hTip = nullptr;
+HWND g_hEditPid = nullptr;
+HWND g_hTgClassic = nullptr;
+HWND g_hTgFocusUnsigned = nullptr;
+HWND g_hPreset = nullptr;     // classic-mode command presets
+HWND g_hCmd = nullptr;        // classic-mode command line (editable)
+int  g_tab = 0;              // 0 = output, 1 = command, 2 = details
+bool g_classic = false;      // moneta64.exe-style minimal mode
+bool g_focusUnsigned = false;// dim signed-only lines in the live view
+bool g_cmdSync = false;      // preview is being rewritten; ignore edit notifications
+bool g_applyingPreset = false;// suppress "custom" reset while a preset is applied
+
+// defined further down (declared here so the selection handlers can refresh them)
+void BuildInfoView();
+void ShowTab(int tab);
+void ApplyClassicMode();
+void UpdateClassicPreview();
+void MarkCustomPreset();
+void HideControl(HWND c);
+
 int g_dpi = 96;
 HFONT g_fBrand = nullptr, g_fBrandSub = nullptr, g_fCardTitle = nullptr;
 HFONT g_fBody = nullptr, g_fBodyBold = nullptr, g_fSmall = nullptr, g_fTiny = nullptr;
@@ -105,13 +142,26 @@ HBRUSH g_brushCard = nullptr;
 
 struct Rect { long left, top, right, bottom; };
 
+struct SideMetrics {
+    int targetH, modeH, optH, filterH, gap;
+    bool twoCol;
+    int titleY;
+    int tSearchY, tComboY, tBtnY, tBtnH;
+    int mRowY, mRowH, vLabelY, vRowY, vRowH, aLabelY, aRowY, aRowH;
+    int oFirstY, oStep, oH;
+    int fFirstY, fStep, fH;
+};
+
 struct Layout {
     RECT cardTarget{}, cardMode{}, cardOpt{}, cardFilter{};
     RECT infoCard{}, actionRow{}, logCard{};
+    RECT classicBar{};
+    RECT classicStatus{};
     RECT combination{};
     int footerTop = 0;
     int headerH = 0;
     int sidebarW = 0;
+    SideMetrics m{};
 };
 Layout g_L;
 
@@ -707,6 +757,17 @@ bool TgGetOn(HWND h) {
     return d && d->on;
 }
 
+// Compact layouts show the short form of a filter name ("Unsigned" instead of
+// "Unsigned modules"); the tooltip keeps the full wording either way.
+void TgSetLabel(HWND h, const wchar_t* label) {
+    TgData* d = (TgData*)GetWindowLongPtrW(h, GWLP_USERDATA);
+    if (!d || !label) return;
+    if (d->label == label) return;
+    d->label = label;
+    SetWindowTextW(h, label);
+    InvalidateRect(h, nullptr, FALSE);
+}
+
 LRESULT CALLBACK TgProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
     TgData* d = (TgData*)GetWindowLongPtrW(h, GWLP_USERDATA);
 
@@ -823,39 +884,85 @@ HWND CreateToggle(HWND parent, int id, const std::wstring& label, bool on, COLOR
 }
 
 // =====================================================================================
+//  Tooltips - every control explains itself on hover
+// =====================================================================================
+
+std::deque<std::wstring> g_tipStore;   // deque: c_str() stays valid as it grows
+
+void InitTooltips(HWND parent) {
+    if (g_hTip) return;
+    g_hTip = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr,
+                             WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX,
+                             CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+                             parent, nullptr, g_hInst, nullptr);
+    if (!g_hTip) return;
+    SetWindowPos(g_hTip, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    SendMessageW(g_hTip, TTM_SETMAXTIPWIDTH, 0, (LPARAM)S(440));
+    SendMessageW(g_hTip, TTM_SETDELAYTIME, TTDT_INITIAL, 350);
+    SendMessageW(g_hTip, TTM_SETDELAYTIME, TTDT_RESHOW, 120);
+    // Match the dark interface instead of the default light system tip.
+    SendMessageW(g_hTip, TTM_SETTIPBKCOLOR, 0, (LPARAM)RGB(15, 23, 42));
+    SendMessageW(g_hTip, TTM_SETTIPTEXTCOLOR, 0, (LPARAM)RGB(226, 232, 240));
+}
+
+void TipAdd(HWND ctl, const wchar_t* text) {
+    if (!g_hTip || !ctl || !text) return;
+    g_tipStore.emplace_back(text);
+    TOOLINFOW ti{};
+    ti.cbSize = sizeof(ti);
+    ti.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
+    // TTF_SUBCLASS hooks the window in hwnd for mouse messages, so it must be the
+    // control itself - pointing it at the parent silently disables every tip.
+    ti.hwnd = ctl;
+    ti.uId = (UINT_PTR)ctl;
+    ti.lpszText = (LPWSTR)g_tipStore.back().c_str();
+    SendMessageW(g_hTip, TTM_ADDTOOLW, 0, (LPARAM)&ti);
+}
+
+// =====================================================================================
 //  Combo box chrome
 // =====================================================================================
 
 LRESULT CALLBACK ComboSubclass(HWND h, UINT msg, WPARAM w, LPARAM l, UINT_PTR, DWORD_PTR) {
     if (msg == WM_PAINT) {
-        LRESULT r = DefSubclassProc(h, msg, w, l);
-        HDC dc = GetDC(h);
-        if (dc) {
-            RECT rc;
-            GetClientRect(h, &rc);
-            int arrowW = S(30);
-            RECT ar{ rc.right - arrowW, rc.top + 1, rc.right - 1, rc.bottom - 1 };
-            HBRUSH b = CreateSolidBrush(Th::INPUT);
-            FillRect(dc, &ar, b);
-            DeleteObject(b);
+        // Paint the closed box in one pass. Letting the default combo paint first and
+        // then drawing the arrow with a second GetDC caused visible flicker in the
+        // classic bar, where the selection text changes as the user types.
+        PAINTSTRUCT ps;
+        HDC dc = BeginPaint(h, &ps);
+        RECT rc;
+        GetClientRect(h, &rc);
+        FillSolid(dc, rc, Th::INPUT);
 
-            int cx = rc.right - arrowW / 2 - S(1);
-            int cy = (rc.top + rc.bottom) / 2;
-            HPEN pen = CreatePen(PS_SOLID, S(2), Th::TEXT_DIM);
-            HGDIOBJ op = SelectObject(dc, pen);
-            MoveToEx(dc, cx - S(4), cy - S(1), nullptr);
-            LineTo(dc, cx, cy + S(3));
-            LineTo(dc, cx + S(4), cy - S(1));
-            SelectObject(dc, op);
-            DeleteObject(pen);
+        bool enabled = IsWindowEnabled(h) != FALSE;
+        wchar_t text[600] = {};
+        int idx = (int)SendMessageW(h, CB_GETCURSEL, 0, 0);
+        if (idx >= 0) SendMessageW(h, CB_GETLBTEXT, (WPARAM)idx, (LPARAM)text);
 
-            HBRUSH bb = CreateSolidBrush(Th::BORDER);
-            RECT br = rc;
-            FrameRect(dc, &br, bb);
-            DeleteObject(bb);
-            ReleaseDC(h, dc);
-        }
-        return r;
+        RECT tr{ rc.left + S(10), rc.top, rc.right - S(32), rc.bottom };
+        SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc, enabled ? Th::TEXT : Th::TEXT_MUTE);
+        HGDIOBJ of = SelectObject(dc, g_fBody);
+        DrawTextW(dc, text, -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        SelectObject(dc, of);
+
+        int arrowW = S(30);
+        int cx = rc.right - arrowW / 2 - S(1);
+        int cy = (rc.top + rc.bottom) / 2;
+        HPEN pen = CreatePen(PS_SOLID, S(2), enabled ? Th::TEXT_DIM : Th::TEXT_MUTE);
+        HGDIOBJ op = SelectObject(dc, pen);
+        MoveToEx(dc, cx - S(4), cy - S(1), nullptr);
+        LineTo(dc, cx, cy + S(3));
+        LineTo(dc, cx + S(4), cy - S(1));
+        SelectObject(dc, op);
+        DeleteObject(pen);
+
+        HBRUSH bb = CreateSolidBrush(GetFocus() == h ? Th::ACCENT_D : Th::BORDER);
+        FrameRect(dc, &rc, bb);
+        DeleteObject(bb);
+
+        EndPaint(h, &ps);
+        return 0;
     }
     if (msg == WM_ERASEBKGND) return 1;
     return DefSubclassProc(h, msg, w, l);
@@ -865,17 +972,22 @@ LRESULT CALLBACK ComboSubclass(HWND h, UINT msg, WPARAM w, LPARAM l, UINT_PTR, D
 //  Dark modal dialog - keeps the message boxes inside the app theme
 // =====================================================================================
 
-enum : int { HS_DLG_OK = 4001, HS_DLG_CANCEL };
+enum : int { HS_DLG_OK = 4001, HS_DLG_CANCEL, HS_DLG_OPEN_FILE, HS_DLG_OPEN_FOLDER, HS_DLG_CLOSE };
 
 enum HsIcon { HSI_INFO = 0, HSI_WARN, HSI_ERROR, HSI_QUESTION };
+
+// Results of the "report saved" dialog (kept away from IDOK/IDCANCEL so the
+// plain message boxes keep their meaning).
+enum { HS_SAVE_CLOSE = 0, HS_SAVE_OPEN_FILE = 10, HS_SAVE_OPEN_FOLDER = 11 };
 
 struct DlgState {
     std::wstring title;
     std::wstring body;
     int icon = HSI_INFO;
     bool question = false;
+    int actions = 0;                 // 1 = OPEN FILE / OPEN FOLDER / CLOSE
     int result = IDOK;
-    RECT iconBox{}, titleR{}, bodyR{}, okR{}, cancelR{};
+    RECT iconBox{}, titleR{}, bodyR{}, okR{}, cancelR{}, openFileR{}, openFolderR{}, closeR{};
     int width = 0, height = 0;
 };
 
@@ -954,10 +1066,22 @@ void ComputeDlgLayout(HDC dc, DlgState& st) {
     int btnW = S(104);
     int btnY = st.bodyR.bottom + S(20);
     int btnX = w - pad - btnW;
-    st.okR = RECT{ btnX, btnY, btnX + btnW, btnY + btnH };
-    if (st.question) {
-        int cx = btnX - S(8) - btnW;
-        st.cancelR = RECT{ cx, btnY, cx + btnW, btnY + btnH };
+    if (st.actions) {
+        int right = w - pad;
+        auto place = [&](int width) {
+            RECT r{ right - width, btnY, right, btnY + btnH };
+            right -= width + S(8);
+            return r;
+        };
+        st.openFileR = place(S(114));
+        st.openFolderR = place(S(136));
+        st.closeR = place(S(92));
+    } else {
+        st.okR = RECT{ btnX, btnY, btnX + btnW, btnY + btnH };
+        if (st.question) {
+            int cx = btnX - S(8) - btnW;
+            st.cancelR = RECT{ cx, btnY, cx + btnW, btnY + btnH };
+        }
     }
     st.height = btnY + btnH + pad;
 }
@@ -991,15 +1115,33 @@ LRESULT CALLBACK DlgProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
         }
         case WM_CREATE: {
             if (!st) return 0;
-            HWND ok = CreateButton(h, HS_DLG_OK, L"OK", BTN_PRIMARY, Th::CARD);
-            MoveWindow(ok, st->okR.left, st->okR.top, st->okR.right - st->okR.left,
-                       st->okR.bottom - st->okR.top, TRUE);
-            if (st->question) {
-                HWND can = CreateButton(h, HS_DLG_CANCEL, L"CANCEL", BTN_GHOST, Th::CARD);
-                MoveWindow(can, st->cancelR.left, st->cancelR.top, st->cancelR.right - st->cancelR.left,
-                           st->cancelR.bottom - st->cancelR.top, TRUE);
+            HWND focusBtn = nullptr;
+            if (st->actions) {
+                HWND of = CreateButton(h, HS_DLG_OPEN_FILE, L"OPEN FILE", BTN_PRIMARY, Th::CARD);
+                MoveWindow(of, st->openFileR.left, st->openFileR.top,
+                           st->openFileR.right - st->openFileR.left,
+                           st->openFileR.bottom - st->openFileR.top, TRUE);
+                HWND od = CreateButton(h, HS_DLG_OPEN_FOLDER, L"OPEN FOLDER", BTN_GHOST, Th::CARD);
+                MoveWindow(od, st->openFolderR.left, st->openFolderR.top,
+                           st->openFolderR.right - st->openFolderR.left,
+                           st->openFolderR.bottom - st->openFolderR.top, TRUE);
+                HWND cl = CreateButton(h, HS_DLG_CLOSE, L"CLOSE", BTN_GHOST, Th::CARD);
+                MoveWindow(cl, st->closeR.left, st->closeR.top,
+                           st->closeR.right - st->closeR.left,
+                           st->closeR.bottom - st->closeR.top, TRUE);
+                focusBtn = of;
+            } else {
+                HWND ok = CreateButton(h, HS_DLG_OK, L"OK", BTN_PRIMARY, Th::CARD);
+                MoveWindow(ok, st->okR.left, st->okR.top, st->okR.right - st->okR.left,
+                           st->okR.bottom - st->okR.top, TRUE);
+                if (st->question) {
+                    HWND can = CreateButton(h, HS_DLG_CANCEL, L"CANCEL", BTN_GHOST, Th::CARD);
+                    MoveWindow(can, st->cancelR.left, st->cancelR.top, st->cancelR.right - st->cancelR.left,
+                               st->cancelR.bottom - st->cancelR.top, TRUE);
+                }
+                focusBtn = ok;
             }
-            SetFocus(ok);
+            SetFocus(focusBtn);
             return 0;
         }
         case WM_ERASEBKGND:
@@ -1025,37 +1167,48 @@ LRESULT CALLBACK DlgProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
             if (st && (id == HS_DLG_OK || id == HS_DLG_CANCEL)) {
                 st->result = (id == HS_DLG_OK) ? IDOK : IDCANCEL;
                 DestroyWindow(h);
+            } else if (st && id == HS_DLG_OPEN_FILE) {
+                st->result = HS_SAVE_OPEN_FILE;
+                DestroyWindow(h);
+            } else if (st && id == HS_DLG_OPEN_FOLDER) {
+                st->result = HS_SAVE_OPEN_FOLDER;
+                DestroyWindow(h);
+            } else if (st && id == HS_DLG_CLOSE) {
+                st->result = HS_SAVE_CLOSE;
+                DestroyWindow(h);
             }
             return 0;
         }
         case WM_KEYDOWN:
             if (st) {
                 if (w == VK_ESCAPE) {
-                    st->result = IDCANCEL;
+                    st->result = st->actions ? HS_SAVE_CLOSE : IDCANCEL;
                     DestroyWindow(h);
                     return 0;
                 }
                 if (w == VK_RETURN) {
-                    st->result = IDOK;
+                    st->result = st->actions ? HS_SAVE_OPEN_FILE : IDOK;
                     DestroyWindow(h);
                     return 0;
                 }
             }
             break;
         case WM_CLOSE:
-            if (st) st->result = IDCANCEL;
+            if (st) st->result = st->actions ? HS_SAVE_CLOSE : IDCANCEL;
             DestroyWindow(h);
             return 0;
     }
     return DefWindowProcW(h, msg, w, l);
 }
 
-int HsMessage(int icon, const std::wstring& title, const std::wstring& body, bool question = false) {
+int HsMessage(int icon, const std::wstring& title, const std::wstring& body, bool question = false,
+              int actions = 0) {
     DlgState st;
     st.title = title;
     st.body = body;
     st.icon = icon;
     st.question = question;
+    st.actions = actions;
 
     HDC screen = GetDC(nullptr);
     if (screen) {
@@ -1074,7 +1227,7 @@ int HsMessage(int icon, const std::wstring& title, const std::wstring& body, boo
 
     HWND dlg = CreateWindowExW(0, kDlgClass, title.c_str(), WS_POPUP | WS_CLIPCHILDREN,
                                x, y, st.width, st.height, owner, nullptr, g_hInst, &st);
-    if (!dlg) return IDOK;
+    if (!dlg) return actions ? HS_SAVE_CLOSE : IDOK;
 
     if (owner) EnableWindow(owner, FALSE);
     ShowWindow(dlg, SW_SHOW);
@@ -1093,6 +1246,36 @@ int HsMessage(int icon, const std::wstring& title, const std::wstring& body, boo
         SetForegroundWindow(owner);
     }
     return st.result;
+}
+
+// Split a long path at folder separators so the dialog never clips it.
+std::wstring WrapPath(const std::wstring& path, size_t maxLen = 86) {
+    std::wstring out, line;
+    size_t lastBreak = std::wstring::npos;
+    for (wchar_t c : path) {
+        line.push_back(c);
+        if (c == L'\\' || c == L'/') lastBreak = line.size();
+        if (line.size() >= maxLen && lastBreak != std::wstring::npos && lastBreak < line.size()) {
+            out += line.substr(0, lastBreak) + L"\r\n";
+            line = line.substr(lastBreak);
+            lastBreak = std::wstring::npos;
+        }
+    }
+    out += line;
+    return out;
+}
+
+// Confirm a saved report and offer to open the file or reveal it in Explorer.
+void ReportSavedDialog(const std::wstring& title, const std::wstring& path) {
+    std::wstring body = L"Saved successfully to:\r\n" + WrapPath(path) +
+                        L"\r\n\r\nOpen the report now, or show the file in its folder.";
+    int r = HsMessage(HSI_INFO, title, body, false, 1);
+    if (r == HS_SAVE_OPEN_FILE) {
+        ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    } else if (r == HS_SAVE_OPEN_FOLDER) {
+        std::wstring args = L"/select,\"" + path + L"\"";
+        ShellExecuteW(nullptr, L"open", L"explorer.exe", args.c_str(), nullptr, SW_SHOWNORMAL);
+    }
 }
 
 // =====================================================================================
@@ -1266,7 +1449,10 @@ ScanMeta g_meta;
 
 void SetStatus(const std::wstring& s) {
     g_statusText = s;
-    if (g_hWnd) InvalidateRect(g_hWnd, &g_L.actionRow, FALSE);
+    if (g_hWnd) {
+        RECT* r = g_classic ? &g_L.classicStatus : &g_L.actionRow;
+        InvalidateRect(g_hWnd, r, FALSE);
+    }
 }
 
 // =====================================================================================
@@ -1291,6 +1477,340 @@ bool ScanEndedEarly(const ScanMeta& m) { return !m.stopped && m.exitCode >= 0xC0
 
 int TotalIocFindings() { return g_iocHits > g_regionHits ? g_iocHits : g_regionHits; }
 int SuspiciousRegions() { return g_regionHits > 0 ? g_regionHits : g_iocHits; }
+
+// =====================================================================================
+//  Discord Rich Presence
+// =====================================================================================
+
+// Set your Discord application's Client ID here, or put it in HyperSense.ini:
+//   [discord]
+//   client_id=123456789012345678
+// The presence is always on; restart the tool to pick up a different Client ID.
+static const wchar_t* kDiscordClientId = L"1564751949201543358";
+
+std::wstring g_rpcClientId;
+std::atomic<bool> g_rpcStop{ false };
+std::thread g_rpcThread;
+std::mutex g_rpcMu;
+ULONGLONG g_rpcStamp = 0;
+ULONGLONG g_rpcScanStartMs = 0;
+
+struct RpcPresence {
+    bool valid = false;
+    bool timer = false;
+    ULONGLONG startMs = 0;
+    std::wstring details, state;
+};
+RpcPresence g_rpcPresence;
+
+std::wstring RpcIniPath() { return JoinPath(ExeDir(), L"HyperSense.ini"); }
+
+// Opt-in protocol trace: set HYPERSENSE_RPC_DEBUG=1 to append every frame Discord
+// returns to hypersense_rpc.log next to the executable. Off by default; there is no log
+// otherwise. The log stays beside the exe so the build needs no temp-directory call.
+bool RpcDebugOn() {
+    wchar_t v[8] = {};
+    DWORD n = GetEnvironmentVariableW(L"HYPERSENSE_RPC_DEBUG", v, 8);
+    return n > 0 && v[0] == L'1';
+}
+
+void RpcLog(const char* what, const std::string& js) {
+    if (!RpcDebugOn()) return;
+    const std::wstring path = JoinPath(ExeDir(), L"hypersense_rpc.log");
+    HANDLE f = CreateFileW(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                           nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return;
+    std::string line = std::string(what) + " " + js + "\r\n";
+    DWORD w = 0;
+    WriteFile(f, line.data(), (DWORD)line.size(), &w, nullptr);
+    CloseHandle(f);
+}
+
+std::wstring RpcClamp(std::wstring s, size_t maxLen = 128) {
+    if (s.size() > maxLen) s = s.substr(0, maxLen);
+    return s;
+}
+
+void RpcLoadConfig() {
+    const std::wstring ini = RpcIniPath();
+    wchar_t buf[160] = {};
+    GetPrivateProfileStringW(L"discord", L"client_id", L"", buf, 160, ini.c_str());
+    g_rpcClientId = Trim(buf);
+    if (g_rpcClientId.empty()) {
+        wchar_t env[160] = {};
+        DWORD n = GetEnvironmentVariableW(L"HYPERSENSE_DISCORD_CLIENT_ID", env, 160);
+        if (n > 0 && n < 160) g_rpcClientId = Trim(env);
+    }
+    if (g_rpcClientId.empty() && kDiscordClientId && *kDiscordClientId)
+        g_rpcClientId = kDiscordClientId;
+}
+
+ULONGLONG RpcUnixMs() {
+    FILETIME ft{};
+    GetSystemTimeAsFileTime(&ft);
+    ULARGE_INTEGER u{};
+    u.LowPart = ft.dwLowDateTime;
+    u.HighPart = ft.dwHighDateTime;
+    return (u.QuadPart - 116444736000000000ull) / 10000ull;
+}
+
+std::string RpcUtf8(const std::wstring& s) {
+    if (s.empty()) return {};
+    int n = WideCharToMultiByte(CP_UTF8, 0, s.c_str(), (int)s.size(), nullptr, 0, nullptr, nullptr);
+    if (n <= 0) return {};
+    std::string out((size_t)n, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, s.c_str(), (int)s.size(), &out[0], n, nullptr, nullptr);
+    return out;
+}
+
+std::string RpcJson(const std::wstring& s) {
+    std::string u = RpcUtf8(s), o;
+    o.reserve(u.size() + 8);
+    for (char c : u) {
+        switch (c) {
+            case '"': o += "\\\""; break;
+            case '\\': o += "\\\\"; break;
+            case '\n': o += "\\n"; break;
+            case '\r': o += "\\r"; break;
+            case '\t': o += "\\t"; break;
+            default:
+                if ((unsigned char)c < 0x20) {
+                    char b[8] = {};
+                    snprintf(b, sizeof(b), "\\u%04x", (unsigned char)c);
+                    o += b;
+                } else {
+                    o += c;
+                }
+        }
+    }
+    return o;
+}
+
+bool RpcWriteFrame(HANDLE p, int op, const std::string& json) {
+    DWORD written = 0;
+    DWORD hdr[2] = { (DWORD)op, (DWORD)json.size() };
+    if (!WriteFile(p, hdr, sizeof(hdr), &written, nullptr) || written != sizeof(hdr)) return false;
+    if (!json.empty()) {
+        if (!WriteFile(p, json.data(), (DWORD)json.size(), &written, nullptr) || written != json.size())
+            return false;
+    }
+    return true;
+}
+
+bool RpcReadFrame(HANDLE p, int& op, std::string& json, DWORD timeoutMs) {
+    ULONGLONG deadline = GetTickCount64() + timeoutMs;
+    for (;;) {
+        DWORD avail = 0;
+        if (!PeekNamedPipe(p, nullptr, 0, nullptr, &avail, nullptr)) return false;
+        if (avail >= sizeof(DWORD) * 2) break;
+        if (GetTickCount64() > deadline) return false;
+        Sleep(20);
+    }
+    DWORD hdr[2] = {};
+    DWORD got = 0;
+    if (!ReadFile(p, hdr, sizeof(hdr), &got, nullptr) || got != sizeof(hdr)) return false;
+    op = (int)hdr[0];
+    DWORD len = hdr[1];
+    if (len > 64 * 1024) return false;
+    json.assign(len, '\0');
+    DWORD off = 0;
+    while (off < len) {
+        if (!ReadFile(p, &json[off], len - off, &got, nullptr) || got == 0) return false;
+        off += got;
+    }
+    return true;
+}
+
+HANDLE RpcConnect(const std::wstring& id) {
+    for (int i = 0; i < 10; ++i) {
+        std::wstring name = Format(L"\\\\.\\pipe\\discord-ipc-%d", i);
+        HANDLE p = CreateFileW(name.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+                               OPEN_EXISTING, 0, nullptr);
+        if (p == INVALID_HANDLE_VALUE) continue;
+        std::string hs = "{\"v\":1,\"client_id\":\"" + RpcUtf8(id) + "\"}";
+        if (!RpcWriteFrame(p, 0, hs)) { CloseHandle(p); continue; }
+        int op = -1;
+        std::string js;
+        if (!RpcReadFrame(p, op, js, 5000) || op != 1) { CloseHandle(p); continue; }
+        RpcLog("handshake", js);
+        return p;
+    }
+    return INVALID_HANDLE_VALUE;
+}
+
+std::string RpcActivityJson(const RpcPresence& p, bool clear) {    std::string a = "{\"cmd\":\"SET_ACTIVITY\",\"args\":{\"pid\":" +
+                    std::to_string((unsigned long)GetCurrentProcessId()) + ",\"activity\":";
+    if (clear) {
+        a += "null";
+    } else {
+        a += "{";
+        bool first = true;
+        auto add = [&](const std::string& kv) {
+            if (!first) a += ",";
+            a += kv;
+            first = false;
+        };
+        if (!p.details.empty()) add("\"details\":\"" + RpcJson(p.details) + "\"");
+        if (!p.state.empty()) add("\"state\":\"" + RpcJson(p.state) + "\"");
+        if (p.timer && p.startMs) add("\"timestamps\":{\"start\":" + std::to_string(p.startMs) + "}");
+        add("\"buttons\":["
+            "{\"label\":\"GitHub - HyperSense\",\"url\":\"https://github.com/hypersenseindia/hypersense-memory-analyzer\"},"
+            "{\"label\":\"Join our Discord\",\"url\":\"https://discord.gg/me7DvyzUp3\"}]");
+        a += "}";
+    }
+    a += "},\"nonce\":\"" + std::to_string((unsigned long long)RpcUnixMs()) + "\"}";
+    return a;
+}
+
+// Called from the UI thread. Only the fields that actually change are rewritten.
+void RpcPublish(const std::wstring& details, const std::wstring& state, bool timer,
+                ULONGLONG startMs) {
+    RpcPresence p;
+    p.valid = true;
+    p.details = RpcClamp(details);
+    p.state = RpcClamp(state);
+    p.timer = timer;
+    p.startMs = startMs;
+
+    std::lock_guard<std::mutex> lk(g_rpcMu);
+    if (g_rpcPresence.valid == p.valid && g_rpcPresence.timer == p.timer &&
+        g_rpcPresence.startMs == p.startMs && g_rpcPresence.details == p.details &&
+        g_rpcPresence.state == p.state)
+        return;
+    g_rpcPresence = p;
+    g_rpcStamp++;
+}
+
+void RpcWorker() {
+    HANDLE pipe = INVALID_HANDLE_VALUE;
+    ULONGLONG lastTry = 0, lastSend = 0, lastStamp = 0;
+
+    while (!g_rpcStop) {
+        bool want = !g_rpcClientId.empty();
+
+        if (!want) {
+            if (pipe != INVALID_HANDLE_VALUE) {
+                RpcWriteFrame(pipe, 1, RpcActivityJson(RpcPresence(), true));
+                CloseHandle(pipe);
+                pipe = INVALID_HANDLE_VALUE;
+            }
+            Sleep(500);
+            continue;
+        }
+
+        if (pipe == INVALID_HANDLE_VALUE) {
+            ULONGLONG now = GetTickCount64();
+            if (now - lastTry >= 3000) {
+                lastTry = now;
+                pipe = RpcConnect(g_rpcClientId);
+                if (pipe != INVALID_HANDLE_VALUE) lastSend = 0;
+            }
+            if (pipe == INVALID_HANDLE_VALUE) {
+                Sleep(400);
+                continue;
+            }
+        }
+
+        // Drain control frames: PING must be answered, CLOSE means reconnect.
+        bool drop = false;
+        for (;;) {
+            DWORD avail = 0;
+            if (!PeekNamedPipe(pipe, nullptr, 0, nullptr, &avail, nullptr)) { drop = true; break; }
+            if (avail < sizeof(DWORD) * 2) break;
+            int op = -1;
+            std::string js;
+            if (!RpcReadFrame(pipe, op, js, 500)) { drop = true; break; }
+            if (op == 1) RpcLog("recv", js);
+            if (op == 2) { drop = true; break; }
+            if (op == 3) RpcWriteFrame(pipe, 4, js);
+        }
+        if (drop) {
+            CloseHandle(pipe);
+            pipe = INVALID_HANDLE_VALUE;
+            continue;
+        }
+
+        RpcPresence snap;
+        ULONGLONG stamp = 0;
+        {
+            std::lock_guard<std::mutex> lk(g_rpcMu);
+            snap = g_rpcPresence;
+            stamp = g_rpcStamp;
+        }
+
+        ULONGLONG now = GetTickCount64();
+        if (stamp != lastStamp && (lastSend == 0 || now - lastSend >= 12000)) {
+            bool clear = !snap.valid;
+            if (!RpcWriteFrame(pipe, 1, RpcActivityJson(snap, clear))) {
+                CloseHandle(pipe);
+                pipe = INVALID_HANDLE_VALUE;
+                continue;
+            }
+            lastStamp = stamp;
+            lastSend = now;
+        }
+        Sleep(250);
+    }
+
+    if (pipe != INVALID_HANDLE_VALUE) {
+        RpcWriteFrame(pipe, 1, RpcActivityJson(RpcPresence(), true));
+        CloseHandle(pipe);
+    }
+}
+
+void RpcStartWorker() {
+    if (!g_rpcThread.joinable()) g_rpcThread = std::thread(RpcWorker);
+}
+
+void RpcStopWorker() {
+    g_rpcStop = true;
+    if (g_rpcThread.joinable()) g_rpcThread.join();
+}
+
+std::wstring ShortTarget() {
+    if (!g_meta.valid) return L"no target";
+    if (g_targetAll) return L"all processes";
+    const ProcItem* p = FindProcByPid(g_targetPid);
+    if (p) return Format(L"%s (PID %lu)", p->name.c_str(), p->pid);
+    return Format(L"PID %lu", g_targetPid);
+}
+
+const wchar_t* ModeLabel(int idx);
+const wchar_t* VerbLabel(int idx);
+
+void RpcPublishIdle() {
+    RpcPublish(L"HYPERSENSEGLOBAL", L"Ready - pick a process and scan", false, 0);
+}
+
+void RpcPublishScanning() {
+    int hits = SuspiciousRegions();
+    std::wstring state = Format(L"%s \u00B7 %s \u00B7 %d suspicious",
+                                g_meta.mode.empty() ? L"IOC" : g_meta.mode.c_str(),
+                                g_meta.verbosity.empty() ? L"DETAIL" : g_meta.verbosity.c_str(), hits);
+    RpcPublish(L"Scanning " + ShortTarget(), state, true, g_rpcScanStartMs);
+}
+
+void RpcPublishResult() {
+    if (!g_meta.valid) { RpcPublishIdle(); return; }
+
+    std::wstring details, state;
+    if (g_meta.stopped) {
+        details = L"Scan stopped - " + ShortTarget();
+        state = L"partial results in the output";
+    } else if (g_accessFailed) {
+        details = L"Scan blocked - " + ShortTarget();
+        state = L"access denied - try ELEVATE";
+    } else if (SuspiciousRegions() > 0) {
+        int regions = SuspiciousRegions();
+        details = L"Scan complete - " + ShortTarget();
+        state = Format(L"%d suspicious region%s \u00B7 review the output", regions,
+                       regions == 1 ? L"" : L"s");
+    } else {
+        details = L"Scan clean - " + ShortTarget();
+        state = L"no suspicious memory regions";
+    }
+    RpcPublish(details, state, false, 0);
+}
 
 std::wstring ResultText() {
     if (!g_meta.valid) return L"no analysis";
@@ -1658,7 +2178,26 @@ std::vector<LogSeg> ColouriseWide(const std::wstring& w) {
 }
 
 std::vector<LogSeg> ColouriseLine(const std::string& raw) {
-    return ColouriseWide(Widen(raw));
+    std::vector<LogSeg> segs = ColouriseWide(Widen(raw));
+    if (!g_focusUnsigned || segs.empty()) return segs;
+
+    // Focus mode: unsigned-module evidence and region findings stay bright,
+    // routine engine chatter is pushed back so the eye lands on what matters.
+    std::wstring w = Widen(raw);
+    std::wstring l = Lower(w);
+    std::wstring t = Trim(w);
+    bool unsignedHit = l.find(L"unsigned") != std::wstring::npos;
+    bool finding = (!t.empty() && t.rfind(L"0x", 0) == 0) ||
+                   l.find(L"ioc") != std::wstring::npos ||
+                   l.find(L"suspicious") != std::wstring::npos;
+
+    if (unsignedHit) {
+        for (auto& s : segs) { s.color = Th::WARN; s.bold = true; }
+        return segs;
+    }
+    if (finding) return segs;
+    for (auto& s : segs) { s.color = RGB(84, 98, 114); s.bold = false; }
+    return segs;
 }
 
 std::wstring LogColorCss(COLORREF c) {
@@ -1744,21 +2283,25 @@ void NoteLineStats(const std::string& raw) {
     }
 }
 
-void RichAppend(const std::wstring& text, COLORREF color, bool bold) {
-    if (!g_hRich) return;
+void RichAppendTo(HWND target, const std::wstring& text, COLORREF color, bool bold) {
+    if (!target) return;
     CHARRANGE cr;
-    SendMessageW(g_hRich, EM_EXGETSEL, 0, (LPARAM)&cr);
+    SendMessageW(target, EM_EXGETSEL, 0, (LPARAM)&cr);
     cr.cpMin = -1;
     cr.cpMax = -1;
-    SendMessageW(g_hRich, EM_EXSETSEL, 0, (LPARAM)&cr);
+    SendMessageW(target, EM_EXSETSEL, 0, (LPARAM)&cr);
 
     CHARFORMAT2W cf{};
     cf.cbSize = sizeof(cf);
     cf.dwMask = CFM_COLOR | CFM_BOLD;
     cf.crTextColor = color;
     cf.dwEffects = bold ? CFE_BOLD : 0;
-    SendMessageW(g_hRich, EM_SETCHARFORMAT, SCF_SELECTION, (LPARAM)&cf);
-    SendMessageW(g_hRich, EM_REPLACESEL, FALSE, (LPARAM)text.c_str());
+    SendMessageW(target, EM_SETCHARFORMAT, SCF_SELECTION, (LPARAM)&cf);
+    SendMessageW(target, EM_REPLACESEL, FALSE, (LPARAM)text.c_str());
+}
+
+void RichAppend(const std::wstring& text, COLORREF color, bool bold) {
+    RichAppendTo(g_hRich, text, color, bold);
 }
 
 void AppendLine(const std::string& line) {
@@ -1923,11 +2466,17 @@ void SelectMode(int idx) {
     g_memMode = idx;
     for (int i = 0; i < 4; ++i) BtnSetChecked(g_hModeBtn[i], i == idx);
     UpdateModeAvailability();
+    MarkCustomPreset();
+    UpdateClassicPreview();
+    if (g_tab) BuildInfoView();
 }
 
 void SelectVerb(int idx) {
     g_verbMode = idx;
     for (int i = 0; i < 3; ++i) BtnSetChecked(g_hVerbBtn[i], i == idx);
+    MarkCustomPreset();
+    UpdateClassicPreview();
+    if (g_tab) BuildInfoView();
 }
 
 bool ParseAddress(std::wstring text, unsigned long long& out) {
@@ -1946,8 +2495,8 @@ bool ParseAddress(std::wstring text, unsigned long long& out) {
     return true;
 }
 
-std::wstring BuildCommandLine() {
-    std::wstring cmd = L"\"" + ExePath() + L"\" --engine";
+std::wstring EngineArgsForPid(const std::wstring& pidToken) {
+    std::wstring cmd;
     cmd += L" -m ";
     switch (g_memMode) {
         case 1: cmd += L"*"; break;
@@ -1955,11 +2504,13 @@ std::wstring BuildCommandLine() {
         case 3: cmd += L"referenced"; break;
         default: cmd += L"ioc"; break;
     }
-    if (g_targetAll) cmd += L" -p *";
-    else cmd += Format(L" -p %lu", g_targetPid);
+    cmd += L" -p " + pidToken;
 
-    cmd += L" -v ";
-    cmd += (g_verbMode == 0 ? L"surface" : (g_verbMode == 1 ? L"detail" : L"debug"));
+    // Surface is the engine default, so only emit -v when it differs.
+    if (g_verbMode != 0) {
+        cmd += L" -v ";
+        cmd += (g_verbMode == 1 ? L"detail" : L"debug");
+    }
 
     if (g_memMode == 2 || g_memMode == 3) {
         wchar_t addr[64] = {};
@@ -1991,6 +2542,34 @@ std::wstring BuildCommandLine() {
         if (!filters.empty()) cmd += L" --filter" + filters;
     }
     return cmd;
+}
+
+std::wstring BuildCommandLine() {
+    return L"\"" + ExePath() + L"\" --engine" +
+           EngineArgsForPid(g_targetAll ? L"*" : Format(L"%lu", g_targetPid));
+}
+
+// -p value as it should appear in the classic preview: the override box wins.
+std::wstring PreviewPidToken() {
+    wchar_t buf[160] = {};
+    if (g_hEditPid) GetWindowTextW(g_hEditPid, buf, 160);
+    std::wstring t = Trim(buf);
+    if (t == L"*") return L"*";
+    if (!t.empty()) {
+        bool numeric = true;
+        for (wchar_t c : t) {
+            if (c < L'0' || c > L'9') { numeric = false; break; }
+        }
+        if (numeric) return t;
+    }
+    if (g_targetAll) return L"*";
+    if (g_targetPid) return Format(L"%lu", g_targetPid);
+    return L"<pid>";
+}
+
+// What the classic bar shows: the same arguments in moneta64.exe form.
+std::wstring BuildMonetaCommandLine() {
+    return L"moneta64.exe" + EngineArgsForPid(PreviewPidToken());
 }
 
 void SaveReportDialog(bool html) {
@@ -2039,8 +2618,7 @@ void SaveReportDialog(bool html) {
     std::wstring data = asHtml ? BuildReportHtml() : BuildReportText();
     if (WriteUtf8File(path, data)) {
         SetStatus(asHtml ? L"HTML REPORT SAVED" : L"TXT REPORT SAVED");
-        HsMessage(HSI_INFO, asHtml ? L"HTML REPORT SAVED" : L"TXT REPORT SAVED",
-                  L"Saved to:\r\n" + path);
+        ReportSavedDialog(asHtml ? L"HTML REPORT SAVED" : L"TXT REPORT SAVED", path);
     } else {
         HsMessage(HSI_ERROR, L"REPORT NOT SAVED",
                   L"Could not write the report file.\r\nCheck the folder permissions and try again.");
@@ -2108,6 +2686,10 @@ void StartScan() {
         g_meta.filters = f.empty() ? L"none" : Trim(f);
     }
 
+    // A scan always shows live output; the other tabs can be revisited afterwards.
+    if (g_tab != 0) ShowTab(0);
+    if (g_tab) BuildInfoView();
+
     // intro lines in viewer
     RichAppend(L"[ " + NowLocal(true) + L" ]  HYPERSENSEGLOBAL // ANALYSIS START\n", Th::ACCENT, true);
     RichAppend(L"[ target ]  " + g_meta.target + L"\n", Th::TEXT_DIM, false);
@@ -2171,6 +2753,8 @@ void StartScan() {
     g_stopRequested = false;
     g_scanGen++;
     g_scanStartTick = GetTickCount64();
+    g_rpcScanStartMs = RpcUnixMs();
+    RpcPublishScanning();
 
     if (g_reader.joinable()) g_reader.join();
     int gen = g_scanGen;
@@ -2256,12 +2840,67 @@ void OnScanDone(int gen) {
     else if (g_accessFailed) SetStatus(L"ACCESS DENIED");
     else if (TotalIocFindings() > 0) SetStatus(Format(L"%d IOC HITS", TotalIocFindings()));
     else SetStatus(L"REPORT READY");
+    if (g_tab) BuildInfoView();
+    RpcPublishResult();
     InvalidateRect(g_hWnd, nullptr, FALSE);
 }
 
 // =====================================================================================
 //  Layout
 // =====================================================================================
+
+// Vertical metrics for the main-menu sidebar. Five tiers, roomiest first; the
+// first one that fits the real client height wins. Every tier keeps all four
+// cards (including ADDRESS / REGION SIZE), so a short window or a high display
+// scale compresses the column instead of clipping it.
+SideMetrics MetricsFor(int tier) {
+    SideMetrics m{};
+    m.titleY = 11;
+    m.twoCol = tier >= 2;
+    switch (tier) {
+        case 0:
+            m.targetH = 150; m.modeH = 178; m.optH = 140; m.filterH = 208; m.gap = 11;
+            m.tSearchY = 30; m.tComboY = 62; m.tBtnY = 104; m.tBtnH = 31;
+            m.mRowY = 30; m.mRowH = 30; m.vLabelY = 66; m.vRowY = 86; m.vRowH = 28;
+            m.aLabelY = 116; m.aRowY = 138; m.aRowH = 26;
+            m.oFirstY = 32; m.oStep = 28; m.oH = 26;
+            m.fFirstY = 32; m.fStep = 28; m.fH = 26;
+            break;
+        case 1:
+            m.targetH = 140; m.modeH = 170; m.optH = 124; m.filterH = 208; m.gap = 11;
+            m.tSearchY = 28; m.tComboY = 58; m.tBtnY = 98; m.tBtnH = 29;
+            m.mRowY = 26; m.mRowH = 28; m.vLabelY = 58; m.vRowY = 74; m.vRowH = 26;
+            m.aLabelY = 104; m.aRowY = 118; m.aRowH = 24;
+            m.oFirstY = 28; m.oStep = 26; m.oH = 25;
+            m.fFirstY = 30; m.fStep = 26; m.fH = 25;
+            break;
+        case 2:
+            m.targetH = 140; m.modeH = 170; m.optH = 124; m.filterH = 124; m.gap = 10;
+            m.tSearchY = 28; m.tComboY = 58; m.tBtnY = 98; m.tBtnH = 29;
+            m.mRowY = 26; m.mRowH = 28; m.vLabelY = 58; m.vRowY = 74; m.vRowH = 26;
+            m.aLabelY = 104; m.aRowY = 118; m.aRowH = 24;
+            m.oFirstY = 28; m.oStep = 26; m.oH = 25;
+            m.fFirstY = 30; m.fStep = 26; m.fH = 25;
+            break;
+        case 3:
+            m.targetH = 136; m.modeH = 168; m.optH = 118; m.filterH = 118; m.gap = 8;
+            m.tSearchY = 28; m.tComboY = 58; m.tBtnY = 96; m.tBtnH = 28;
+            m.mRowY = 26; m.mRowH = 28; m.vLabelY = 58; m.vRowY = 74; m.vRowH = 26;
+            m.aLabelY = 104; m.aRowY = 118; m.aRowH = 24;
+            m.oFirstY = 28; m.oStep = 26; m.oH = 24;
+            m.fFirstY = 28; m.fStep = 26; m.fH = 24;
+            break;
+        default:
+            m.targetH = 124; m.modeH = 148; m.optH = 106; m.filterH = 106; m.gap = 6;
+            m.tSearchY = 26; m.tComboY = 54; m.tBtnY = 90; m.tBtnH = 28;
+            m.mRowY = 24; m.mRowH = 26; m.vLabelY = 54; m.vRowY = 68; m.vRowH = 24;
+            m.aLabelY = 96; m.aRowY = 110; m.aRowH = 24;
+            m.oFirstY = 26; m.oStep = 24; m.oH = 24;
+            m.fFirstY = 26; m.fStep = 24; m.fH = 24;
+            break;
+    }
+    return m;
+}
 
 void LayoutControls(HWND h, int W, int H) {
     int m = S(18);
@@ -2271,66 +2910,169 @@ void LayoutControls(HWND h, int W, int H) {
     int sidebarW = S(352);
     g_L.sidebarW = sidebarW;
 
+    // header toggles - visible in both layouts
+    const int igW = S(148), clW = S(150), fuW = S(198), gap = S(8);
+    int hx = W - m - igW;
+    MoveWindow(g_hTgInsta, hx, S(27), igW, S(26), TRUE);
+    hx -= gap + clW;
+    MoveWindow(g_hTgClassic, hx, S(27), clW, S(26), TRUE);
+    hx -= gap + fuW;
+    MoveWindow(g_hTgFocusUnsigned, hx, S(27), fuW, S(26), TRUE);
+
+    const int tabW[3] = { S(90), S(112), S(110) };
+    auto layoutTabs = [&](const RECT& card) {
+        int total = tabW[0] + tabW[1] + tabW[2] + S(16);
+        int tx = card.right - S(14) - total;
+        int ty = card.top + S(8);
+        for (int i = 0; i < 3; ++i) {
+            MoveWindow(g_hTab[i], tx, ty, tabW[i], S(24), TRUE);
+            tx += tabW[i] + S(8);
+        }
+    };
+
+    if (g_classic) {
+        g_L.cardTarget = RECT{};
+        g_L.cardMode = RECT{};
+        g_L.cardOpt = RECT{};
+        g_L.cardFilter = RECT{};
+        g_L.infoCard = RECT{};
+        g_L.actionRow = RECT{};
+
+        int top = g_L.headerH + S(10);
+        g_L.classicBar = { m, top, W - m, top + S(168) };
+        g_L.logCard = { m, g_L.classicBar.bottom + S(12), W - m, g_L.footerTop - S(10) };
+        if (g_L.logCard.bottom < g_L.logCard.top + S(160)) g_L.logCard.bottom = g_L.logCard.top + S(160);
+
+        // Same target picker as the main menu: type to filter, choose from the list.
+        int left = g_L.classicBar.left + S(16);
+        int right = g_L.classicBar.right - S(16);
+        int searchW = S(260);
+        int pidW = S(220);
+        int comboW = (right - left) - searchW - pidW - S(16);
+        if (comboW < S(260)) comboW = S(260);
+
+        int row1 = g_L.classicBar.top + S(26);
+        MoveWindow(g_hEditSearch, left, row1, searchW, S(30), TRUE);
+        MoveWindow(g_hCombo, left + searchW + S(8), row1, comboW, S(220), TRUE);
+        MoveWindow(g_hEditPid, left + searchW + S(8) + comboW + S(8), row1, pidW, S(30), TRUE);
+
+        int labelW = S(64);
+        int row2 = g_L.classicBar.top + S(64);
+        int row3 = g_L.classicBar.top + S(96);
+        MoveWindow(g_hPreset, left + labelW, row2, (right - left) - labelW, S(220), TRUE);
+        MoveWindow(g_hCmd, left + labelW, row3, (right - left) - labelW, S(26), TRUE);
+
+        int cx = left;
+        int row4 = g_L.classicBar.top + S(130);
+        MoveWindow(g_hBtnRun, cx, row4, S(176), S(30), TRUE); cx += S(176) + S(8);
+        MoveWindow(g_hBtnStop, cx, row4, S(88), S(30), TRUE); cx += S(88) + S(8);
+        MoveWindow(g_hBtnSaveTxt, cx, row4, S(104), S(30), TRUE); cx += S(104) + S(8);
+        MoveWindow(g_hBtnSaveHtml, cx, row4, S(112), S(30), TRUE); cx += S(112) + S(8);
+        MoveWindow(g_hBtnClear, cx, row4, S(84), S(30), TRUE); cx += S(84) + S(8);
+        MoveWindow(g_hBtnRefresh, cx, row4, S(104), S(30), TRUE);
+
+        g_L.classicStatus = { g_L.classicBar.right - S(320), g_L.classicBar.top + S(7),
+                              g_L.classicBar.right - S(16), g_L.classicBar.top + S(23) };
+
+        RECT lr = g_L.logCard;
+        MoveWindow(g_hRich, lr.left + S(12), lr.top + S(44), (lr.right - lr.left) - S(24),
+                   (lr.bottom - lr.top) - S(56), TRUE);
+        MoveWindow(g_hInfo, lr.left + S(12), lr.top + S(44), (lr.right - lr.left) - S(24),
+                   (lr.bottom - lr.top) - S(56), TRUE);
+        layoutTabs(g_L.logCard);
+        return;
+    }
+
     int x = m;
-    int y = g_L.headerH + S(4);
+    int y = g_L.headerH + S(10);
     int cw = sidebarW;
+
+    // Height-adaptive sidebar: pick the roomiest tier that fits the real client.
+    const int bottomGap = S(10);
+    const int cardSpace = (g_L.footerTop - bottomGap) - y;
+    int tier = 0;
+    for (int i = 1; i < 5; ++i) {
+        SideMetrics t = MetricsFor(i);
+        if (S(t.targetH + t.modeH + t.optH + t.filterH + t.gap * 3) <= cardSpace) { tier = i; break; }
+        tier = i;
+    }
+    const SideMetrics M = MetricsFor(tier);
+    g_L.m = M;
+    const bool twoCol = M.twoCol;
 
     auto setCard = [&](RECT& r, int height) {
         r = { x, y, x + cw, y + height };
-        y += height + S(11);
+        y += height + S(M.gap);
     };
-    setCard(g_L.cardTarget, S(150));
-    setCard(g_L.cardMode, S(178));
-    setCard(g_L.cardOpt, S(140));
-    g_L.cardFilter = { x, y, x + cw, g_L.footerTop - S(8) };
-    if (g_L.cardFilter.bottom < y + S(120)) g_L.cardFilter.bottom = y + S(120);
+    setCard(g_L.cardTarget, S(M.targetH));
+    setCard(g_L.cardMode, S(M.modeH));
+    setCard(g_L.cardOpt, S(M.optH));
+    g_L.cardFilter = { x, y, x + cw, g_L.footerTop - bottomGap };
+    if (g_L.cardFilter.bottom < y + S(M.filterH)) g_L.cardFilter.bottom = y + S(M.filterH);
 
     int pad = S(13);
 
     // target card
     int cy = g_L.cardTarget.top;
-    MoveWindow(g_hEditSearch, x + pad, cy + S(30), cw - pad * 2, S(26), TRUE);
-    MoveWindow(g_hCombo, x + pad, cy + S(62), cw - pad * 2, S(220), TRUE);
+    MoveWindow(g_hEditSearch, x + pad, cy + S(M.tSearchY), cw - pad * 2, S(26), TRUE);
+    MoveWindow(g_hCombo, x + pad, cy + S(M.tComboY), cw - pad * 2, S(220), TRUE);
     int bw = (cw - pad * 2 - S(8)) / 2;
-    MoveWindow(g_hBtnSelect, x + pad, cy + S(104), bw, S(31), TRUE);
-    MoveWindow(g_hBtnRefresh, x + pad + bw + S(8), cy + S(104), bw, S(31), TRUE);
+    MoveWindow(g_hBtnSelect, x + pad, cy + S(M.tBtnY), bw, S(M.tBtnH), TRUE);
+    MoveWindow(g_hBtnRefresh, x + pad + bw + S(8), cy + S(M.tBtnY), bw, S(M.tBtnH), TRUE);
 
     // mode card
     cy = g_L.cardMode.top;
     int segW = (cw - pad * 2 - S(18)) / 4;
     for (int i = 0; i < 4; ++i) {
-        MoveWindow(g_hModeBtn[i], x + pad + i * (segW + S(6)), cy + S(30), segW, S(30), TRUE);
+        MoveWindow(g_hModeBtn[i], x + pad + i * (segW + S(6)), cy + S(M.mRowY), segW, S(M.mRowH), TRUE);
     }
     int verbW = (cw - pad * 2 - S(12)) / 3;
     for (int i = 0; i < 3; ++i) {
-        MoveWindow(g_hVerbBtn[i], x + pad + i * (verbW + S(6)), cy + S(86), verbW, S(28), TRUE);
+        MoveWindow(g_hVerbBtn[i], x + pad + i * (verbW + S(6)), cy + S(M.vRowY), verbW, S(M.vRowH), TRUE);
     }
     int addrW = S(126);
-    MoveWindow(g_hEditAddr, x + pad, cy + S(138), addrW, S(26), TRUE);
-    MoveWindow(g_hEditSize, x + pad + addrW + S(8), cy + S(138), cw - pad * 2 - addrW - S(8), S(26), TRUE);
+    MoveWindow(g_hEditAddr, x + pad, cy + S(M.aRowY), addrW, S(M.aRowH), TRUE);
+    MoveWindow(g_hEditSize, x + pad + addrW + S(8), cy + S(M.aRowY), cw - pad * 2 - addrW - S(8), S(M.aRowH), TRUE);
 
     // options card
     cy = g_L.cardOpt.top;
-    MoveWindow(g_hTgStats, x + pad, cy + S(32), cw - pad * 2, S(26), TRUE);
-    MoveWindow(g_hTgFromBase, x + pad, cy + S(60), cw - pad * 2, S(26), TRUE);
-    MoveWindow(g_hTgDump, x + pad, cy + S(88), cw - pad * 2, S(26), TRUE);
+    HWND opts[] = { g_hTgStats, g_hTgFromBase, g_hTgDump };
+    for (int i = 0; i < 3; ++i) {
+        MoveWindow(opts[i], x + pad, cy + S(M.oFirstY) + i * S(M.oStep), cw - pad * 2, S(M.oH), TRUE);
+    }
 
     // filter card
     cy = g_L.cardFilter.top;
     HWND filt[] = { g_hTgFilterAll, g_hTgUnsigned, g_hTgMetadata, g_hTgClrHeap, g_hTgClrPrvx, g_hTgWow64 };
+    const wchar_t* filtFull[] = { L"Apply all filters (*)", L"Unsigned modules", L"Metadata modules",
+                                  L"CLR heap", L"CLR prvx (JIT)", L"Wow64 init" };
+    const wchar_t* filtShort[] = { L"Apply all (*)", L"Unsigned", L"Metadata",
+                                   L"CLR heap", L"CLR JIT", L"Wow64" };
+    int colW = (cw - pad * 2 - S(8)) / 2;
+    int fBottom = g_L.footerTop - S(2);
     for (int i = 0; i < 6; ++i) {
-        MoveWindow(filt[i], x + pad, cy + S(32) + i * S(28), cw - pad * 2, S(26), TRUE);
+        int row = twoCol ? (i / 2) : i;
+        int col = twoCol ? (i % 2) : 0;
+        int fx = x + pad + col * (colW + S(8));
+        int fy = cy + S(M.fFirstY) + row * S(M.fStep);
+        if (fy + S(M.fH) > fBottom) {
+            HideControl(filt[i]);       // only reachable on a client too short for any tier
+            continue;
+        }
+        if (!IsWindowVisible(filt[i])) ShowWindow(filt[i], SW_SHOW);
+        MoveWindow(filt[i], fx, fy, twoCol ? colW : cw - pad * 2, S(M.fH), TRUE);
+        TgSetLabel(filt[i], twoCol ? filtShort[i] : filtFull[i]);
     }
 
     // right column
     int rx = x + sidebarW + S(14);
     int rw = W - rx - m;
     if (rw < S(400)) rw = S(400);
-    int rtop = g_L.headerH + S(4);
+    int rtop = g_L.headerH + S(10);
 
     g_L.infoCard = { rx, rtop, rx + rw, rtop + S(92) };
     g_L.actionRow = { rx, g_L.infoCard.bottom + S(12), rx + rw, g_L.infoCard.bottom + S(12) + S(46) };
-    g_L.logCard = { rx, g_L.actionRow.bottom + S(12), rx + rw, g_L.footerTop - S(8) };
+    g_L.logCard = { rx, g_L.actionRow.bottom + S(12), rx + rw, g_L.footerTop - bottomGap };
     if (g_L.logCard.bottom < g_L.logCard.top + S(160)) g_L.logCard.bottom = g_L.logCard.top + S(160);
 
     // action buttons
@@ -2343,15 +3085,16 @@ void LayoutControls(HWND h, int W, int H) {
     MoveWindow(g_hBtnSaveHtml, bx, ay, S(118), ah, TRUE); bx += S(118) + S(8);
     MoveWindow(g_hBtnClear, bx, ay, S(88), ah, TRUE); bx += S(88) + S(8);
     MoveWindow(g_hBtnElevate, bx, ay, S(110), ah, TRUE);
-    ShowWindow(g_hBtnElevate, g_sys.elevated ? SW_HIDE : SW_SHOW);
+    if (g_sys.elevated) HideControl(g_hBtnElevate);
+    else ShowWindow(g_hBtnElevate, SW_SHOW);
 
-    // log edit
+    // output view (live log + the command/details overlay share the same rect)
     RECT lr = g_L.logCard;
     MoveWindow(g_hRich, lr.left + S(12), lr.top + S(44), (lr.right - lr.left) - S(24),
                (lr.bottom - lr.top) - S(56), TRUE);
-
-    // header instagram toggle
-    MoveWindow(g_hTgInsta, W - m - S(164), S(27), S(164), S(26), TRUE);
+    MoveWindow(g_hInfo, lr.left + S(12), lr.top + S(44), (lr.right - lr.left) - S(24),
+               (lr.bottom - lr.top) - S(56), TRUE);
+    layoutTabs(g_L.logCard);
 }
 
 // =====================================================================================
@@ -2463,6 +3206,7 @@ void PaintActionStatus(HDC dc) {
         text = Format(L"SCANNING  %02llu:%02llu", el / 60, el % 60);
     }
     RECT sr{ r.left + S(660), r.top, right, r.bottom };
+    if (sr.left > right - S(120)) sr.left = right - S(120);
     COLORREF stCol = Th::TEXT_DIM;
     if (g_scanning) stCol = Th::WARN;
     else if (g_meta.valid && (g_meta.stopped || g_accessFailed)) stCol = Th::WARN;
@@ -2484,22 +3228,26 @@ void PaintLogHeader(HDC dc) {
     SelectObject(dc, ob); SelectObject(dc, op);
     DeleteObject(b); DeleteObject(p);
 
-    RECT title{ r.left + pad + S(14), r.top + S(10), r.right - S(220), r.top + S(28) };
-    DrawTextC(dc, L"LIVE ANALYSIS OUTPUT", title, g_fCardTitle, Th::TEXT_DIM, DT_LEFT | DT_SINGLELINE, S(1));
+    const int tabTotal = S(90) + S(112) + S(110) + S(16);
+    int titleRight = r.right - S(14) - tabTotal - S(12);
 
-    RECT sub{ r.left + pad + S(14), r.top + S(24), r.right - S(220), r.top + S(38) };
+    RECT title{ r.left + pad + S(14), r.top + S(8), titleRight, r.top + S(25) };
+    const wchar_t* names[3] = { L"LIVE ANALYSIS OUTPUT", L"COMMAND LINE", L"SCAN DETAILS" };
+    DrawTextC(dc, names[g_tab < 0 || g_tab > 2 ? 0 : g_tab], title, g_fCardTitle, Th::TEXT_DIM,
+              DT_LEFT | DT_SINGLELINE, S(1));
+
+    RECT sub{ r.left + pad + S(14), r.top + S(26), titleRight, r.top + S(40) };
     std::wstring subText = Format(L"MONETA ENGINE  \u00B7  %d lines", g_viewLines);
     COLORREF subCol = Th::TEXT_MUTE;
-    if (g_meta.valid && g_iocHits > 0) {
+    if (g_tab == 1) {
+        subText = L"EQUIVALENT ARGUMENTS  \u00B7  SELECTION FILLED INTO -p";
+    } else if (g_tab == 2) {
+        subText = L"TARGET, SETTINGS AND LAST RUN";
+    } else if (g_meta.valid && g_iocHits > 0) {
         subText += Format(L"  \u00B7  %d IOC HITS", g_iocHits);
         subCol = LOG_IOC;
     }
     DrawTextC(dc, subText, sub, g_fTiny, subCol, DT_LEFT | DT_SINGLELINE);
-
-    RECT stR{ r.right - S(220), r.top + S(12), r.right - pad, r.top + S(30) };
-    std::wstring st = g_scanning ? L"STREAMING" : (g_meta.valid ? L"READY" : L"IDLE");
-    DrawTextC(dc, st, stR, g_fBtnSm, g_scanning ? Th::ACCENT : Th::TEXT_MUTE,
-              DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
 
     DrawLineH(dc, r.left + pad, r.right - pad, r.top + S(35), Th::BORDER);
 }
@@ -2511,17 +3259,29 @@ void PaintFooter(HDC dc, int W, int H) {
 
     int m = S(18);
     int y1 = g_L.footerTop + S(9);
-    RECT eng{ m, y1, W - m, y1 + S(18) };
+
+    // Measure the right-hand block first so the credits cannot run underneath it
+    // when the window is near its minimum width.
+    const wchar_t* devText = L"DEV  \u00B7  AG HYDRAXFF (@hydraxff_yt)   |   HYPERSENSEGLOBAL\u2122 V1";
+    SIZE devSize{};
+    HGDIOBJ of = SelectObject(dc, g_fSmall);
+    GetTextExtentPoint32W(dc, devText, (int)wcslen(devText), &devSize);
+    SelectObject(dc, of);
+    int devRight = W - m;
+    int devLeft = devRight - devSize.cx - S(6);
+    if (devLeft < W / 2) devLeft = W / 2;
+
+    RECT eng{ m, y1, devLeft - S(16), y1 + S(18) };
     DrawTextC(dc, L"ENGINE  \u00B7  Built-in Moneta v1.0.1  \u2014  single executable, no external engine required",
-              eng, g_fSmall, Th::TEXT_MUTE, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+              eng, g_fSmall, Th::TEXT_MUTE, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
 
-    RECT cr{ m, y1 + S(20), W - m, y1 + S(38) };
+    RECT cr{ m, y1 + S(20), devLeft - S(16), y1 + S(38) };
     DrawTextC(dc, L"CREDITS  \u00B7  FORREST ORR & GABRIEL LANDAU (MONETA ENGINE)  \u00B7  ZERO-CRASH BUILD",
-              cr, g_fSmall, Th::TEXT_MUTE, DT_LEFT | DT_SINGLELINE | DT_VCENTER, S(1));
+              cr, g_fSmall, Th::TEXT_MUTE, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS, S(1));
 
-    RECT dev{ W - m - S(520), y1 + S(20), W - m, y1 + S(38) };
-    DrawTextC(dc, L"DEV  \u00B7  AG HYDRAXFF (@hydraxff_yt)   |   HYPERSENSEGLOBAL\u2122 V1", dev, g_fSmall,
-              Th::TEXT_DIM, DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
+    RECT dev{ devLeft, y1 + S(20), devRight, y1 + S(38) };
+    DrawTextC(dc, devText, dev, g_fSmall, Th::TEXT_DIM,
+              DT_RIGHT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
 }
 
 void PaintMain(HWND h, HDC dc) {
@@ -2530,39 +3290,78 @@ void PaintMain(HWND h, HDC dc) {
     FillSolid(dc, rc, Th::BG);
 
     PaintHeader(dc, rc.right);
-    PaintInfoCard(dc);
-
-    RECT cards[] = { g_L.cardTarget, g_L.cardMode, g_L.cardOpt, g_L.cardFilter, g_L.logCard };
-    for (const auto& c : cards) FillRoundRect(dc, c, S(10), Th::CARD, Th::BORDER);
 
     int pad = S(13);
 
-    // target card labels
-    RECT t1{ g_L.cardTarget.left + pad, g_L.cardTarget.top + S(11), g_L.cardTarget.right - pad, g_L.cardTarget.top + S(25) };
-    DrawTextC(dc, L"TARGET PROCESS", t1, g_fCardTitle, Th::TEXT_DIM, DT_LEFT | DT_SINGLELINE, S(1));
-    if (!g_procFilter.empty()) {
-        DrawTextC(dc, Format(L"%d MATCH", g_procMatchCount), t1, g_fTiny, Th::ACCENT,
+    if (g_classic) {
+        RECT bar = g_L.classicBar;
+        FillRoundRect(dc, bar, S(10), Th::CARD, Th::BORDER);
+
+        RECT t{ bar.left + S(16), bar.top + S(7), bar.right - S(16), bar.top + S(23) };
+        DrawTextC(dc, L"CLASSIC MODE  \u00B7  moneta64.exe-STYLE SCAN", t, g_fCardTitle,
+                  Th::TEXT_DIM, DT_LEFT | DT_SINGLELINE, S(1));
+
+        RECT hint{ bar.left + S(744), bar.top + S(130), bar.right - S(16), bar.top + S(160) };
+        DrawTextC(dc, L"type in COMMAND and press Enter to run it", hint, g_fTiny,
+                  Th::TEXT_MUTE, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+
+        int labelW = S(64);
+        RECT pl{ bar.left + S(16), bar.top + S(64), bar.left + S(16) + labelW, bar.top + S(90) };
+        DrawTextC(dc, L"PRESET", pl, g_fTiny, Th::TEXT_MUTE, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        RECT cl{ bar.left + S(16), bar.top + S(96), bar.left + S(16) + labelW, bar.top + S(122) };
+        DrawTextC(dc, L"COMMAND", cl, g_fTiny, Th::TEXT_MUTE, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+        std::wstring stText = g_statusText;
+        if (g_scanning) {
+            ULONGLONG el = (GetTickCount64() - g_scanStartTick) / 1000;
+            stText = Format(L"SCANNING  %02llu:%02llu", el / 60, el % 60);
+        }
+        DrawTextC(dc, stText, g_L.classicStatus, g_fBtnSm, g_scanning ? Th::WARN : Th::TEXT_MUTE,
                   DT_RIGHT | DT_SINGLELINE);
+    } else {
+        PaintInfoCard(dc);
+
+        RECT cards[] = { g_L.cardTarget, g_L.cardMode, g_L.cardOpt, g_L.cardFilter };
+        for (const auto& c : cards) FillRoundRect(dc, c, S(10), Th::CARD, Th::BORDER);
+
+        // target card labels
+        RECT t1{ g_L.cardTarget.left + pad, g_L.cardTarget.top + S(g_L.m.titleY),
+                 g_L.cardTarget.right - pad, g_L.cardTarget.top + S(g_L.m.titleY + 14) };
+        DrawTextC(dc, L"TARGET PROCESS", t1, g_fCardTitle, Th::TEXT_DIM, DT_LEFT | DT_SINGLELINE, S(1));
+        if (!g_procFilter.empty()) {
+            DrawTextC(dc, Format(L"%d MATCH", g_procMatchCount), t1, g_fTiny, Th::ACCENT,
+                      DT_RIGHT | DT_SINGLELINE);
+        }
+
+        RECT m1{ g_L.cardMode.left + pad, g_L.cardMode.top + S(g_L.m.titleY),
+                 g_L.cardMode.right - pad, g_L.cardMode.top + S(g_L.m.titleY + 14) };
+        DrawTextC(dc, L"MEMORY SELECTION", m1, g_fCardTitle, Th::TEXT_DIM, DT_LEFT | DT_SINGLELINE, S(1));
+
+        RECT vlab{ g_L.cardMode.left + pad, g_L.cardMode.top + S(g_L.m.vLabelY),
+                   g_L.cardMode.right - pad, g_L.cardMode.top + S(g_L.m.vLabelY + 14) };
+        DrawTextC(dc, L"VERBOSITY", vlab, g_fCardTitle, Th::TEXT_MUTE, DT_LEFT | DT_SINGLELINE, S(1));
+
+        {
+            RECT alab{ g_L.cardMode.left + pad, g_L.cardMode.top + S(g_L.m.aLabelY),
+                       g_L.cardMode.left + pad + S(126), g_L.cardMode.top + S(g_L.m.aLabelY + 14) };
+            DrawTextC(dc, L"ADDRESS (0x...)", alab, g_fTiny, Th::TEXT_MUTE, DT_LEFT | DT_SINGLELINE);
+            RECT slab{ g_L.cardMode.left + pad + S(134), g_L.cardMode.top + S(g_L.m.aLabelY),
+                       g_L.cardMode.right - pad, g_L.cardMode.top + S(g_L.m.aLabelY + 14) };
+            DrawTextC(dc, L"REGION SIZE", slab, g_fTiny, Th::TEXT_MUTE, DT_LEFT | DT_SINGLELINE);
+        }
+
+        RECT o1{ g_L.cardOpt.left + pad, g_L.cardOpt.top + S(g_L.m.titleY),
+                 g_L.cardOpt.right - pad, g_L.cardOpt.top + S(g_L.m.titleY + 14) };
+        DrawTextC(dc, L"ANALYSIS OPTIONS", o1, g_fCardTitle, Th::TEXT_DIM, DT_LEFT | DT_SINGLELINE, S(1));
+
+        RECT f1{ g_L.cardFilter.left + pad, g_L.cardFilter.top + S(g_L.m.titleY),
+                 g_L.cardFilter.right - pad, g_L.cardFilter.top + S(g_L.m.titleY + 14) };
+        DrawTextC(dc, L"IOC FILTERS", f1, g_fCardTitle, Th::TEXT_DIM, DT_LEFT | DT_SINGLELINE, S(1));
+
+        PaintActionStatus(dc);
     }
 
-    RECT m1{ g_L.cardMode.left + pad, g_L.cardMode.top + S(11), g_L.cardMode.right - pad, g_L.cardMode.top + S(25) };
-    DrawTextC(dc, L"MEMORY SELECTION", m1, g_fCardTitle, Th::TEXT_DIM, DT_LEFT | DT_SINGLELINE, S(1));
-
-    RECT vlab{ g_L.cardMode.left + pad, g_L.cardMode.top + S(66), g_L.cardMode.right - pad, g_L.cardMode.top + S(80) };
-    DrawTextC(dc, L"VERBOSITY", vlab, g_fCardTitle, Th::TEXT_MUTE, DT_LEFT | DT_SINGLELINE, S(1));
-
-    RECT alab{ g_L.cardMode.left + pad, g_L.cardMode.top + S(116), g_L.cardMode.left + pad + S(126), g_L.cardMode.top + S(130) };
-    DrawTextC(dc, L"ADDRESS (0x...)", alab, g_fTiny, Th::TEXT_MUTE, DT_LEFT | DT_SINGLELINE);
-    RECT slab{ g_L.cardMode.left + pad + S(134), g_L.cardMode.top + S(116), g_L.cardMode.right - pad, g_L.cardMode.top + S(130) };
-    DrawTextC(dc, L"REGION SIZE", slab, g_fTiny, Th::TEXT_MUTE, DT_LEFT | DT_SINGLELINE);
-
-    RECT o1{ g_L.cardOpt.left + pad, g_L.cardOpt.top + S(11), g_L.cardOpt.right - pad, g_L.cardOpt.top + S(25) };
-    DrawTextC(dc, L"ANALYSIS OPTIONS", o1, g_fCardTitle, Th::TEXT_DIM, DT_LEFT | DT_SINGLELINE, S(1));
-
-    RECT f1{ g_L.cardFilter.left + pad, g_L.cardFilter.top + S(11), g_L.cardFilter.right - pad, g_L.cardFilter.top + S(25) };
-    DrawTextC(dc, L"IOC FILTERS", f1, g_fCardTitle, Th::TEXT_DIM, DT_LEFT | DT_SINGLELINE, S(1));
-
-    PaintActionStatus(dc);
+    FillRoundRect(dc, g_L.logCard, S(10), Th::CARD, Th::BORDER);
     PaintLogHeader(dc);
     PaintFooter(dc, rc.right, rc.bottom);
 }
@@ -2583,6 +3382,10 @@ void OnComboChanged() {
         g_targetAll = false;
         g_targetPid = 0;
     }
+    if (g_classic && g_hEditPid) SetWindowTextW(g_hEditPid, L"");
+    MarkCustomPreset();
+    UpdateClassicPreview();
+    if (g_tab) BuildInfoView();
 }
 
 void SelectExeDialog() {
@@ -2653,11 +3456,898 @@ void ClearLog() {
     EnableWindow(g_hBtnSaveHtml, FALSE);
     SetStatus(L"READY");
     InvalidateRect(g_hWnd, nullptr, FALSE);
+    if (g_tab) BuildInfoView();
 }
 
 // =====================================================================================
-//  Main window procedure
+//  Views: OUTPUT / COMMAND / DETAILS, classic mode, output context menu
 // =====================================================================================
+
+std::wstring TargetSummary() {
+    if (g_targetAll) return L"all accessible processes (*)";
+    if (!g_targetPid) return L"none selected (REQUIRED)";
+    const ProcItem* p = FindProcByPid(g_targetPid);
+    if (p) return Format(L"%s  (PID %lu)\r\n%s", p->name.c_str(), p->pid, p->path.c_str());
+    return Format(L"PID %lu", g_targetPid);
+}
+
+std::wstring FilterSummary() {
+    if (TgGetOn(g_hTgFilterAll)) return L"* (all filters - malware and unknown false positives only)";
+    std::wstring f;
+    if (TgGetOn(g_hTgUnsigned)) f += L"unsigned-modules ";
+    if (TgGetOn(g_hTgMetadata)) f += L"metadata-modules ";
+    if (TgGetOn(g_hTgClrHeap)) f += L"clr-heap ";
+    if (TgGetOn(g_hTgClrPrvx)) f += L"clr-prvx ";
+    if (TgGetOn(g_hTgWow64)) f += L"wow64-init ";
+    return f.empty() ? L"none selected (engine default)" : Trim(f);
+}
+
+std::wstring OptionSummary() {
+    std::wstring o;
+    if (TgGetOn(g_hTgStats)) o += L"statistics ";
+    if (TgGetOn(g_hTgFromBase)) o += L"from-base ";
+    if (TgGetOn(g_hTgDump)) o += L"dump memory (-d) ";
+    return o.empty() ? L"none" : Trim(o);
+}
+
+void InfoAppend(const std::wstring& text, COLORREF color, bool bold, int twips = 190,
+                const wchar_t* face = L"Consolas") {
+    if (!g_hInfo) return;
+    CHARRANGE cr{};
+    SendMessageW(g_hInfo, EM_EXGETSEL, 0, (LPARAM)&cr);
+    cr.cpMin = -1;
+    cr.cpMax = -1;
+    SendMessageW(g_hInfo, EM_EXSETSEL, 0, (LPARAM)&cr);
+
+    CHARFORMAT2W cf{};
+    cf.cbSize = sizeof(cf);
+    cf.dwMask = CFM_COLOR | CFM_BOLD | CFM_SIZE | CFM_FACE;
+    cf.crTextColor = color;
+    cf.dwEffects = bold ? CFE_BOLD : 0;
+    cf.yHeight = twips;
+    StringCchCopyW(cf.szFaceName, 32, face);
+    SendMessageW(g_hInfo, EM_SETCHARFORMAT, SCF_SELECTION, (LPARAM)&cf);
+    SendMessageW(g_hInfo, EM_REPLACESEL, FALSE, (LPARAM)text.c_str());
+}
+
+void InfoRow(const wchar_t* flag, const std::wstring& what, const std::wstring& value) {
+    InfoAppend(Format(L"  %-14s", flag), Th::ACCENT, true);
+    InfoAppend(what + L"\r\n", Th::TEXT_DIM, false);
+    InfoAppend(L"                 " + value + L"\r\n", Th::TEXT, false);
+}
+
+void BuildInfoView() {
+    if (!g_hInfo) return;
+    SetWindowTextW(g_hInfo, L"");
+
+    if (g_tab == 1) {
+        InfoAppend(L"EQUIVALENT MONETA COMMAND LINE\r\n", Th::ACCENT, true, 220, L"Segoe UI");
+        InfoAppend(L"Copy this into a console to reproduce the scan without the GUI.\r\n\r\n",
+                   Th::TEXT_MUTE, false, 165, L"Segoe UI");
+
+        std::wstring cmd = BuildCommandLine();
+        InfoAppend(cmd + L"\r\n\r\n", Th::TEXT, false, 200);
+
+        InfoAppend(L"ARGUMENT MAP\r\n", Th::ACCENT, true, 200, L"Segoe UI");
+        InfoAppend(L"The values below are what the GUI will pass on the next run.\r\n\r\n",
+                   Th::TEXT_MUTE, false, 165, L"Segoe UI");
+
+        InfoRow(L"-m", L"memory selection:  * | ioc | region | referenced",
+                std::wstring(ModeLabel(g_memMode)) + L"  -  " + ModeDesc(g_memMode));
+        InfoRow(L"-p", L"target process:  PID or *  (REQUIRED)",
+                TargetSummary());
+        InfoRow(L"-v", L"verbosity:  surface | detail | debug",
+                std::wstring(VerbLabel(g_verbMode)));
+        InfoRow(L"-d", L"dump selected memory to disk after each process scan",
+                TgGetOn(g_hTgDump) ? L"ON" : L"off");
+        InfoRow(L"--option", L"from-base | statistics",
+                OptionSummary());
+        InfoRow(L"--filter", L"unsigned-modules | metadata-modules | clr-heap | clr-prvx | wow64-init | *",
+                FilterSummary());
+
+        std::wstring addr = L"not used - needs REGION or REFERENCED mode";
+        if (g_memMode == 2 || g_memMode == 3) {
+            wchar_t a[64] = {}, s[32] = {};
+            if (g_hEditAddr) GetWindowTextW(g_hEditAddr, a, 64);
+            if (g_hEditSize) GetWindowTextW(g_hEditSize, s, 32);
+            addr = Trim(a).empty() ? L"(empty - enter 0x...)" : Trim(a);
+            std::wstring sz = Trim(s);
+            if (!sz.empty()) addr += L"   region-size " + sz;
+        }
+        InfoRow(L"--address", L"start address for region / referenced modes", addr);
+        InfoRow(L"--region-size", L"optional size of the region at --address", L"optional, default 0");
+
+        InfoAppend(L"\r\nNOTES\r\n", Th::ACCENT, true, 200, L"Segoe UI");
+        InfoAppend(L"  - The selected process is filled into -p automatically.\r\n", Th::TEXT_DIM, false, 175);
+        InfoAppend(L"  - --address and --region-size only apply to region and referenced.\r\n", Th::TEXT_DIM, false, 175);
+        InfoAppend(L"  - Turn off \"Apply all filters\" to choose individual filters.\r\n", Th::TEXT_DIM, false, 175);
+        InfoAppend(L"  - Right-click any file path in OUTPUT to open it, search its SHA-256\r\n", Th::TEXT_DIM, false, 175);
+        InfoAppend(L"    on VirusTotal in your browser, or copy it. Ctrl+click opens the file.\r\n", Th::TEXT_DIM, false, 175);
+        return;
+    }
+
+    if (g_tab == 2) {
+        InfoAppend(L"SCAN DETAILS\r\n", Th::ACCENT, true, 220, L"Segoe UI");
+        InfoAppend(L"Exactly what this tool is about to run, and on what.\r\n\r\n",
+                   Th::TEXT_MUTE, false, 165, L"Segoe UI");
+
+        InfoAppend(L"TARGET\r\n", Th::ACCENT, true, 200, L"Segoe UI");
+        InfoAppend(L"  " + TargetSummary() + L"\r\n\r\n", Th::TEXT, false, 180);
+
+        InfoAppend(L"SCAN SETTINGS\r\n", Th::ACCENT, true, 200, L"Segoe UI");
+        InfoAppend(L"  memory      " + std::wstring(ModeDesc(g_memMode)) + L"\r\n", Th::TEXT_DIM, false, 180);
+        InfoAppend(L"  verbosity   " + std::wstring(VerbLabel(g_verbMode)) + L"\r\n", Th::TEXT_DIM, false, 180);
+        InfoAppend(L"  options     " + OptionSummary() + L"\r\n", Th::TEXT_DIM, false, 180);
+        InfoAppend(L"  filters     " + FilterSummary() + L"\r\n\r\n", Th::TEXT_DIM, false, 180);
+
+        InfoAppend(L"HOST\r\n", Th::ACCENT, true, 200, L"Segoe UI");
+        InfoAppend(L"  " + g_sys.computer + L"   " + g_sys.osName + L"   " + g_sys.arch + L"   " + g_sys.osBuild + L"\r\n",
+                   Th::TEXT, false, 180);
+        std::wstring acct = g_sys.domain.empty() ? g_sys.account : (g_sys.domain + L"\\" + g_sys.account);
+        InfoAppend(L"  " + acct + L"   SID " + g_sys.sid + L"\r\n", Th::TEXT_DIM, false, 175);
+        InfoAppend(L"  " + std::wstring(g_sys.elevated ? L"ELEVATED - full process access"
+                                                    : L"STANDARD - some targets will refuse access") + L"\r\n\r\n",
+                   g_sys.elevated ? Th::OK : Th::WARN, false, 175);
+
+        InfoAppend(L"ENGINE\r\n", Th::ACCENT, true, 200, L"Segoe UI");
+        InfoAppend(L"  Moneta v1.0.1 compiled into this executable - no external engine needed.\r\n",
+                   Th::TEXT_DIM, false, 180);
+        InfoAppend(L"  Credits: Forrest Orr and Gabriel Landau (Moneta, GPLv3).\r\n\r\n",
+                   Th::TEXT_DIM, false, 175);
+
+        InfoAppend(L"LAST RUN\r\n", Th::ACCENT, true, 200, L"Segoe UI");
+        if (g_meta.valid) {
+            InfoAppend(L"  started    " + g_meta.started + L"\r\n", Th::TEXT_DIM, false, 180);
+            InfoAppend(L"  finished   " + g_meta.finished + L"\r\n", Th::TEXT_DIM, false, 180);
+            InfoAppend(L"  duration   " + g_meta.duration + L"\r\n", Th::TEXT_DIM, false, 180);
+            InfoAppend(L"  exit       " + ExitCodeText(g_meta.exitCode) + L"\r\n", Th::TEXT_DIM, false, 180);
+            InfoAppend(L"  result     " + ResultText() + L"\r\n", Th::TEXT, false, 180);
+        } else {
+            InfoAppend(L"  No analysis has run yet.\r\n", Th::TEXT_MUTE, false, 180);
+        }
+        return;
+    }
+}
+
+void ShowTab(int tab) {
+    if (tab < 0 || tab > 2) tab = 0;
+    g_tab = tab;
+    for (int i = 0; i < 3; ++i) {
+        if (g_hTab[i]) BtnSetChecked(g_hTab[i], i == tab);
+    }
+    if (g_hRich) ShowWindow(g_hRich, tab == 0 ? SW_SHOW : SW_HIDE);
+    if (g_hInfo) ShowWindow(g_hInfo, tab == 0 ? SW_HIDE : SW_SHOW);
+    if (tab != 0) BuildInfoView();
+    if (g_hWnd) InvalidateRect(g_hWnd, &g_L.logCard, FALSE);
+}
+
+bool ResolveClassicTarget() {
+    wchar_t buf[160] = {};
+    if (g_hEditPid) GetWindowTextW(g_hEditPid, buf, 160);
+    std::wstring t = Trim(buf);
+
+    if (t.empty()) return g_targetAll || g_targetPid != 0;
+    if (t == L"*") {
+        g_targetAll = true;
+        g_targetPid = 0;
+        return true;
+    }
+
+    bool numeric = true;
+    for (wchar_t c : t) {
+        if (c < L'0' || c > L'9') { numeric = false; break; }
+    }
+    if (numeric) {
+        DWORD pid = (DWORD)_wtoi(t.c_str());
+        if (!pid) return false;
+        g_targetAll = false;
+        g_targetPid = pid;
+        const ProcItem* p = FindProcByPid(pid);
+        if (p) SelectTargetPid(pid, false);
+        return true;
+    }
+
+    std::wstring want = Lower(t);
+    if (Lower(FileNameOf(t)) == want) { /* keep as typed */ }
+
+    auto match = [&](const std::vector<ProcItem>& list, bool partial) -> const ProcItem* {
+        for (const auto& p : list) {
+            std::wstring n = Lower(p.name);
+            if (n == want || Lower(FileNameOf(p.path)) == want) return &p;
+            if (partial && n.find(want) != std::wstring::npos) return &p;
+        }
+        return nullptr;
+    };
+
+    const ProcItem* p = match(g_procs, false);
+    if (!p) {
+        RefreshProcessList();
+        p = match(g_procs, false);
+    }
+    if (!p) p = match(g_procs, true);
+    if (!p) return false;
+
+    g_targetAll = false;
+    g_targetPid = p->pid;
+    SelectTargetPid(p->pid, false);
+    return true;
+}
+
+// =====================================================================================
+//  Classic-mode command presets
+// =====================================================================================
+
+struct ClassicPreset {
+    const wchar_t* label;
+    int mode, verb;
+    int stats, fromBase, dump, filterAll;
+};
+
+// mode/verb/toggle values of -1 mean "not part of this preset".
+static const ClassicPreset kPresets[] = {
+    { L"Custom - keep the current settings", -1, -1, -1, -1, -1, -1 },
+    { L"moneta64.exe -m ioc -p <pid>", 0, 0, 0, 0, 0, 0 },
+    { L"moneta64.exe -m ioc -p <pid> -v detail", 0, 1, 0, 0, 0, 0 },
+    { L"moneta64.exe -m ioc -p <pid> --filter *", 0, 0, 0, 0, 0, 1 },
+    { L"moneta64.exe -m ioc -p <pid> -d", 0, 0, 0, 0, 1, 0 },
+    { L"moneta64.exe -m ioc -p <pid> -v detail --option statistics --filter *", 0, 1, 1, 0, 0, 1 },
+    { L"moneta64.exe -m * -p <pid> -v detail", 1, 1, 0, 0, 0, 0 },
+};
+const int kPresetCount = (int)(sizeof(kPresets) / sizeof(kPresets[0]));
+
+void UpdateClassicPreview() {
+    if (!g_hCmd || !g_classic || g_cmdSync) return;
+    std::wstring line = BuildMonetaCommandLine();
+    wchar_t cur[1200] = {};
+    GetWindowTextW(g_hCmd, cur, 1200);
+    if (line == cur) return;
+    g_cmdSync = true;
+    SetWindowTextW(g_hCmd, line.c_str());
+    g_cmdSync = false;
+}
+
+int MatchPreset() {
+    bool stats = TgGetOn(g_hTgStats), fromBase = TgGetOn(g_hTgFromBase);
+    bool dump = TgGetOn(g_hTgDump), filterAll = TgGetOn(g_hTgFilterAll);
+    bool anyIndividual = TgGetOn(g_hTgUnsigned) || TgGetOn(g_hTgMetadata) || TgGetOn(g_hTgClrHeap) ||
+                         TgGetOn(g_hTgClrPrvx) || TgGetOn(g_hTgWow64);
+    for (int i = 1; i < kPresetCount; ++i) {
+        const ClassicPreset& p = kPresets[i];
+        if (p.mode != g_memMode || p.verb != g_verbMode) continue;
+        if ((p.stats != 0) != stats || (p.fromBase != 0) != fromBase || (p.dump != 0) != dump) continue;
+        if ((p.filterAll != 0) != filterAll) continue;
+        if (!filterAll && anyIndividual) continue;
+        return i;
+    }
+    return 0;
+}
+
+void MarkCustomPreset() {
+    if (g_applyingPreset || !g_hPreset || !g_classic) return;
+    int idx = MatchPreset();
+    if ((int)SendMessageW(g_hPreset, CB_GETCURSEL, 0, 0) != idx)
+        SendMessageW(g_hPreset, CB_SETCURSEL, (WPARAM)idx, 0);
+}
+
+void ApplyPreset(int idx) {
+    if (idx <= 0 || idx >= kPresetCount) {
+        UpdateClassicPreview();
+        if (g_tab) BuildInfoView();
+        return;
+    }
+    const ClassicPreset& p = kPresets[idx];
+
+    g_applyingPreset = true;
+    if (p.mode >= 0) SelectMode(p.mode);
+    if (p.verb >= 0) SelectVerb(p.verb);
+    TgSetOn(g_hTgStats, p.stats != 0);
+    TgSetOn(g_hTgFromBase, p.fromBase != 0);
+    TgSetOn(g_hTgDump, p.dump != 0);
+    TgSetOn(g_hTgFilterAll, p.filterAll != 0);
+    if (!p.filterAll) {
+        // The presets carry no individual filters.
+        HWND f[] = { g_hTgUnsigned, g_hTgMetadata, g_hTgClrHeap, g_hTgClrPrvx, g_hTgWow64 };
+        for (HWND c : f) TgSetOn(c, false);
+    }
+    UpdateToggleAvailability();
+    g_applyingPreset = false;
+
+    if (g_hPreset) SendMessageW(g_hPreset, CB_SETCURSEL, (WPARAM)idx, 0);
+    UpdateClassicPreview();
+    SetStatus(L"PRESET APPLIED");
+    if (g_tab) BuildInfoView();
+}
+
+// Split a command line into tokens, honouring double quotes.
+std::vector<std::wstring> SplitArgs(const std::wstring& line) {
+    std::vector<std::wstring> out;
+    std::wstring cur;
+    bool quoted = false;
+    for (wchar_t c : line) {
+        if (c == L'"') { quoted = !quoted; continue; }
+        if (!quoted && (c == L' ' || c == L'\t')) {
+            if (!cur.empty()) { out.push_back(cur); cur.clear(); }
+            continue;
+        }
+        cur.push_back(c);
+    }
+    if (!cur.empty()) out.push_back(cur);
+    return out;
+}
+
+// Read a moneta64.exe command line back into the GUI so RUN reproduces it.
+bool ApplyCommandText(const std::wstring& line) {
+    std::vector<std::wstring> a = SplitArgs(line);
+    size_t i = 0;
+    if (!a.empty() && Lower(a[0]).find(L".exe") != std::wstring::npos) i = 1;
+    if (i < a.size() && Lower(a[i]) == L"--engine") i++;
+
+    int mode = -1, verb = -1;
+    bool dump = false, stats = false, fromBase = false, filterSignaled = false, filterAll = false;
+    bool fUnsigned = false, fMetadata = false, fClrHeap = false, fClrPrvx = false, fWow64 = false;
+    std::wstring pidToken, addrToken, sizeToken;
+    bool sawAny = false;
+
+    for (; i < a.size(); ++i) {
+        std::wstring k = Lower(a[i]);
+        if (k == L"-m" && i + 1 < a.size()) {
+            std::wstring v = Lower(a[++i]);
+            if (v == L"ioc") mode = 0;
+            else if (v == L"*" || v == L"all") mode = 1;
+            else if (v == L"region") mode = 2;
+            else if (v == L"referenced") mode = 3;
+            sawAny = true;
+        } else if (k == L"-p" && i + 1 < a.size()) {
+            pidToken = a[++i];
+            sawAny = true;
+        } else if (k == L"-v" && i + 1 < a.size()) {
+            std::wstring v = Lower(a[++i]);
+            if (v == L"surface" || v == L"detail" || v == L"debug") verb = (v == L"surface" ? 0 : (v == L"detail" ? 1 : 2));
+            sawAny = true;
+        } else if (k == L"-d") {
+            dump = true;
+            sawAny = true;
+        } else if (k == L"--address" && i + 1 < a.size()) {
+            addrToken = a[++i];
+            sawAny = true;
+        } else if (k == L"--region-size" && i + 1 < a.size()) {
+            sizeToken = a[++i];
+            sawAny = true;
+        } else if (k == L"--option") {
+            for (size_t j = i + 1; j < a.size(); ++j) {
+                std::wstring o = Lower(a[j]);
+                if (o == L"statistics") stats = true;
+                else if (o == L"from-base") fromBase = true;
+            }
+            sawAny = true;
+        } else if (k == L"--filter") {
+            filterSignaled = true;
+            for (size_t j = i + 1; j < a.size(); ++j) {
+                std::wstring f = Lower(a[j]);
+                if (f == L"*") filterAll = true;
+                else if (f == L"unsigned-modules") fUnsigned = true;
+                else if (f == L"metadata-modules") fMetadata = true;
+                else if (f == L"clr-heap") fClrHeap = true;
+                else if (f == L"clr-prvx") fClrPrvx = true;
+                else if (f == L"wow64-init") fWow64 = true;
+            }
+            sawAny = true;
+        }
+    }
+    if (!sawAny) return false;
+
+    g_applyingPreset = true;
+    if (mode >= 0) SelectMode(mode);
+    if (verb >= 0) SelectVerb(verb);
+    TgSetOn(g_hTgStats, stats);
+    TgSetOn(g_hTgFromBase, fromBase);
+    TgSetOn(g_hTgDump, dump);
+    if (filterSignaled) {
+        TgSetOn(g_hTgFilterAll, filterAll);
+        TgSetOn(g_hTgUnsigned, fUnsigned);
+        TgSetOn(g_hTgMetadata, fMetadata);
+        TgSetOn(g_hTgClrHeap, fClrHeap);
+        TgSetOn(g_hTgClrPrvx, fClrPrvx);
+        TgSetOn(g_hTgWow64, fWow64);
+        UpdateToggleAvailability();
+    }
+    if (!addrToken.empty() && g_hEditAddr) SetWindowTextW(g_hEditAddr, addrToken.c_str());
+    if (!sizeToken.empty() && g_hEditSize) SetWindowTextW(g_hEditSize, sizeToken.c_str());
+    g_applyingPreset = false;
+
+    if (!pidToken.empty() && g_hEditPid) {
+        SetWindowTextW(g_hEditPid, pidToken.c_str());
+        if (Trim(pidToken) == L"*") {
+            g_targetAll = true;
+            g_targetPid = 0;
+            SendMessageW(g_hCombo, CB_SETCURSEL, 1, 0);
+        } else {
+            ResolveClassicTarget();
+        }
+    }
+
+    if (g_hPreset) SendMessageW(g_hPreset, CB_SETCURSEL, 0, 0);
+    UpdateClassicPreview();
+    SetStatus(L"COMMAND LINE APPLIED");
+    if (g_tab) BuildInfoView();
+    return true;
+}
+
+// Classic bar: apply whatever the user typed, then run it (Enter in the CMD box).
+void RunClassicCommandText() {
+    if (!g_hCmd || g_cmdSync) return;
+    wchar_t buf[1200] = {};
+    GetWindowTextW(g_hCmd, buf, 1200);
+    std::wstring line = Trim(buf);
+    if (line.empty()) return;
+    if (!ApplyCommandText(line)) {
+        UpdateClassicPreview();
+        return;
+    }
+    SendMessageW(g_hWnd, WM_COMMAND, MAKEWPARAM(HS_BTN_RUN, BN_CLICKED), 0);
+}
+
+// A hidden control still sits inside the parent's child-clip region, so its last
+// pixels would survive a parent repaint and smear over the other mode. Move it out
+// of the client area as we hide it; LayoutControls puts it back when it is shown.
+void HideControl(HWND c) {
+    if (!c) return;
+    ShowWindow(c, SW_HIDE);
+    SetWindowPos(c, nullptr, -S(4000), -S(4000), S(10), S(10),
+                 SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+void ApplyClassicMode() {
+    g_classic = TgGetOn(g_hTgClassic);
+
+    HWND side[] = {
+        g_hBtnSelect,
+        g_hModeBtn[0], g_hModeBtn[1], g_hModeBtn[2], g_hModeBtn[3],
+        g_hVerbBtn[0], g_hVerbBtn[1], g_hVerbBtn[2],
+        g_hEditAddr, g_hEditSize,
+        g_hTgStats, g_hTgFromBase, g_hTgDump,
+        g_hTgFilterAll, g_hTgUnsigned, g_hTgMetadata, g_hTgClrHeap, g_hTgClrPrvx, g_hTgWow64,
+        g_hBtnElevate
+    };
+    for (HWND c : side) {
+        if (!c) continue;
+        if (g_classic) HideControl(c);
+        else ShowWindow(c, SW_SHOW);
+    }
+    if (g_classic) {
+        ShowWindow(g_hEditPid, SW_SHOW);
+        ShowWindow(g_hPreset, SW_SHOW);
+        ShowWindow(g_hCmd, SW_SHOW);
+    } else {
+        HideControl(g_hEditPid);
+        HideControl(g_hPreset);
+        HideControl(g_hCmd);
+    }
+
+    if (g_classic) {
+        // The plain mode should not inherit a mode that demands an address.
+        if (g_memMode == 2 || g_memMode == 3) SelectMode(0);
+        // The list is the primary picker; the PID box is an optional override.
+        if (g_hEditPid) SetWindowTextW(g_hEditPid, L"");
+        RefreshProcessList();
+        ShowTab(0);
+        MarkCustomPreset();
+    }
+
+    if (g_hWnd) {
+        RECT rc{};
+        GetClientRect(g_hWnd, &rc);
+        LayoutControls(g_hWnd, rc.right, rc.bottom);
+        UpdateClassicPreview();
+        // Repaint the parent and every child in one pass: the two layouts reuse the
+        // same window, so stale pixels from the other mode must not survive.
+        RedrawWindow(g_hWnd, nullptr, nullptr,
+                     RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+    }
+}
+
+// Re-render the visible log from the saved body so FOCUS UNSIGNED applies at once.
+void RebuildLiveView() {
+    if (!g_hRich || g_scanning) return;
+
+    SetWindowTextW(g_hRich, L"");
+    g_partialLine.clear();
+    g_viewLines = 0;
+    g_viewCapped = false;
+    g_iocHits = 0;
+    g_regionHits = 0;
+    g_accessFailed = false;
+
+    size_t pos = 0;
+    while (pos <= g_reportBody.size() && g_viewLines < g_viewLineCap) {
+        size_t nl = g_reportBody.find('\n', pos);
+        std::string line = (nl == std::string::npos)
+                               ? g_reportBody.substr(pos)
+                               : g_reportBody.substr(pos, nl - pos);
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        AppendLine(line);
+        if (nl == std::string::npos) break;
+        pos = nl + 1;
+    }
+    ScrollLogBottom();
+    InvalidateRect(g_hWnd, &g_L.logCard, FALSE);
+}
+
+std::wstring EditText(HWND edit) {    if (!edit) return L"";
+    GETTEXTLENGTHEX gtl{};
+    gtl.flags = GTL_DEFAULT;
+    gtl.codepage = 1200;   // CP_UNICODE
+    LRESULT len = SendMessageW(edit, EM_GETTEXTLENGTHEX, (WPARAM)&gtl, 0);
+    if (len <= 0) return L"";
+    std::wstring out((size_t)len + 1, L'\0');
+    GETTEXTEX gt{};
+    gt.cb = (DWORD)((len + 1) * sizeof(wchar_t));
+    gt.flags = GT_DEFAULT;
+    gt.codepage = 1200;
+    LRESULT n = SendMessageW(edit, EM_GETTEXTEX, (WPARAM)&gt, (LPARAM)&out[0]);
+    if (n > 0) out.resize((size_t)n);
+    else out.clear();
+    return out;
+}
+
+std::wstring LineAtChar(HWND edit, int idx, int& lineStart) {
+    lineStart = 0;
+    if (!edit) return L"";
+    int line = (int)SendMessageW(edit, EM_LINEFROMCHAR, (WPARAM)idx, 0);
+    int start = (int)SendMessageW(edit, EM_LINEINDEX, (WPARAM)line, 0);
+    if (start < 0) return L"";
+    int len = (int)SendMessageW(edit, EM_LINELENGTH, (WPARAM)start, 0);
+    if (len < 0) return L"";
+    std::wstring buf((size_t)len + 1, L'\0');
+    if (len > 0) {
+        buf[0] = (wchar_t)len;
+        SendMessageW(edit, EM_GETLINE, (WPARAM)line, (LPARAM)&buf[0]);
+    }
+    buf.resize((size_t)len);
+    lineStart = start;
+    return buf;
+}
+
+bool IsPathDelim(wchar_t c) {
+    return iswspace(c) || c == L'|' || c == L'"' || c == L'\'' || c == L'<' || c == L'>' ||
+           c == L'(' || c == L')' || c == L'[' || c == L']' || c == L'{' || c == L'}' ||
+           c == L',' || c == L';';
+}
+
+bool IsPathHardDelim(wchar_t c) {
+    return c == L'|' || c == L'"' || c == L'\'' || c == L'<' || c == L'>' ||
+           c == L'(' || c == L')' || c == L'[' || c == L']' || c == L'{' || c == L'}' ||
+           c == L',' || c == L';';
+}
+
+bool IsDrivePath(const std::wstring& s) {
+    if (s.size() >= 3 && iswalpha(s[0]) && s[1] == L':' && (s[2] == L'\\' || s[2] == L'/'))
+        return true;
+    return s.size() >= 2 && s[0] == L'\\' && s[1] == L'\\';
+}
+
+std::wstring TrimPathToken(std::wstring s) {
+    while (!s.empty() && (s.back() == L'.' || s.back() == L',' || s.back() == L'\r')) s.pop_back();
+    return s;
+}
+
+// Extract the path under the cursor. Handles paths containing spaces by growing the
+// candidate one word at a time until the file system confirms it exists.
+std::wstring PathTokenAt(HWND edit, POINT clientPt, bool& exists, std::wstring& lineOut) {
+    exists = false;
+    lineOut.clear();
+    if (!edit) return L"";
+
+    POINTL pl{ clientPt.x, clientPt.y };
+    LRESULT hit = SendMessageW(edit, EM_CHARFROMPOS, 0, (LPARAM)&pl);
+    int idx = (int)hit;
+    if (idx < 0) return L"";
+
+    int start = 0;
+    std::wstring line = LineAtChar(edit, idx, start);
+    lineOut = line;
+    if (line.empty()) return L"";
+
+    size_t i = (size_t)(idx - start);
+    if (i > line.size()) i = line.size();
+    size_t a = i, b = i;
+    while (a > 0 && !IsPathDelim(line[a - 1])) --a;
+    while (b < line.size() && !IsPathDelim(line[b])) ++b;
+    if (b <= a) return L"";
+
+    std::wstring tok = TrimPathToken(line.substr(a, b - a));
+
+    // Clicking a word inside "C:\Program Files\..." yields a token without the drive.
+    // Walk left to find the drive root and rebuild the token from there.
+    if (!IsDrivePath(tok)) {
+        size_t stop = (i > 260) ? i - 260 : 0;
+        for (size_t p = i; p > stop; --p) {
+            if (p + 2 >= line.size()) continue;
+            if (!iswalpha(line[p]) || line[p + 1] != L':' || (line[p + 2] != L'\\' && line[p + 2] != L'/'))
+                continue;
+            if (p > 0 && !IsPathDelim(line[p - 1]) && line[p - 1] != L'\\') continue;
+            a = p;
+            b = i;
+            while (b < line.size() && !iswspace(line[b]) && !IsPathHardDelim(line[b])) ++b;
+            tok = TrimPathToken(line.substr(a, b - a));
+            break;
+        }
+    }
+
+    if (!IsDrivePath(tok)) return L"";
+
+    size_t end = b;
+    for (;;) {
+        std::wstring cand = TrimPathToken(line.substr(a, end - a));
+        if (cand.size() > 2 && GetFileAttributesW(cand.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            exists = true;
+            return cand;
+        }
+        if (end >= line.size()) break;
+        size_t p = end;
+        while (p < line.size() && iswspace(line[p])) ++p;
+        if (p >= line.size() || IsPathHardDelim(line[p])) break;
+        size_t q = p;
+        while (q < line.size() && !iswspace(line[q]) && !IsPathHardDelim(line[q])) ++q;
+        end = q;
+    }
+
+    return TrimPathToken(line.substr(a, b - a));
+}
+
+// Clipboard copies go through the rich edit itself (WM_COPY) instead of the clipboard
+// APIs. An unsigned memory scanner that also imports OpenClipboard / SetClipboardData /
+// GetAsyncKeyState reads like a credential stealer to machine-learning engines, and the
+// control performs the same job without those imports.
+void CopyRange(HWND edit, int start, int end) {
+    if (!edit || end <= start) return;
+    CHARRANGE oldSel{};
+    SendMessageW(edit, EM_EXGETSEL, 0, (LPARAM)&oldSel);
+    SendMessageW(edit, EM_SETSEL, (WPARAM)start, (LPARAM)end);
+    SendMessageW(edit, WM_COPY, 0, 0);
+    SendMessageW(edit, EM_EXSETSEL, 0, (LPARAM)&oldSel);
+}
+
+void CopyAllText(HWND edit) {
+    if (!edit) return;
+    CHARRANGE oldSel{};
+    SendMessageW(edit, EM_EXGETSEL, 0, (LPARAM)&oldSel);
+    SendMessageW(edit, EM_SETSEL, 0, -1);
+    SendMessageW(edit, WM_COPY, 0, 0);
+    SendMessageW(edit, EM_EXSETSEL, 0, (LPARAM)&oldSel);
+}
+
+void CopyLineAt(HWND edit, POINT client, bool fromKeyboard) {
+    if (!edit) return;
+    int idx = -1;
+    if (fromKeyboard) {
+        CHARRANGE sel{};
+        SendMessageW(edit, EM_EXGETSEL, 0, (LPARAM)&sel);
+        idx = (int)sel.cpMin;
+    } else {
+        idx = (int)SendMessageW(edit, EM_CHARFROMPOS, 0, (LPARAM)&client);
+    }
+    if (idx < 0) idx = 0;
+    int lineNo = (int)SendMessageW(edit, EM_EXLINEFROMCHAR, 0, (LPARAM)idx);
+    if (lineNo < 0) return;
+    int start = (int)SendMessageW(edit, EM_LINEINDEX, (WPARAM)lineNo, 0);
+    if (start < 0) return;
+    int len = (int)SendMessageW(edit, EM_LINELENGTH, (WPARAM)start, 0);
+    if (len <= 0) return;
+    CopyRange(edit, start, start + len);
+}
+
+void OpenToken(const std::wstring& path, bool reveal) {
+    if (path.empty()) return;
+    if (reveal) {
+        std::wstring args = L"/select,\"" + path + L"\"";
+        ShellExecuteW(nullptr, L"open", L"explorer.exe", args.c_str(), nullptr, SW_SHOWNORMAL);
+    } else {
+        ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    }
+}
+
+bool IsDirectoryPath(const std::wstring& path) {
+    DWORD a = GetFileAttributesW(path.c_str());
+    return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY) != 0;
+}
+
+// SHA-256 of a file on disk, used to jump straight to its VirusTotal report.
+// Implemented locally (src/sha256.h) instead of through the advapi32 crypto provider:
+// keeping CryptAcquireContext/CryptHashData out of the import table matters for the
+// machine-learning score of an unsigned memory reader.
+bool ComputeFileSha256(const std::wstring& path, std::wstring& hexOut) {
+    hexOut.clear();
+    HANDLE f = CreateFileW(path.c_str(), GENERIC_READ,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           nullptr, OPEN_EXISTING,
+                           FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return false;
+
+    hs::Sha256 ctx;
+    hs::Sha256Init(ctx);
+    std::vector<BYTE> buf(1u << 20);
+    bool ok = true;
+    for (;;) {
+        DWORD got = 0;
+        if (!ReadFile(f, buf.data(), (DWORD)buf.size(), &got, nullptr)) { ok = false; break; }
+        if (got == 0) break;
+        hs::Sha256Update(ctx, buf.data(), got);
+    }
+    CloseHandle(f);
+    if (!ok) return false;
+
+    unsigned char digest[32] = {};
+    hs::Sha256Final(ctx, digest);
+
+    static const wchar_t* kHex = L"0123456789abcdef";
+    hexOut.reserve(64);
+    for (int i = 0; i < 32; ++i) {
+        hexOut.push_back(kHex[digest[i] >> 4]);
+        hexOut.push_back(kHex[digest[i] & 0x0F]);
+    }
+    return hexOut.size() == 64;
+}
+
+void SearchVirusTotal(const std::wstring& path) {
+    if (path.empty()) return;
+    HCURSOR old = SetCursor(LoadCursorW(nullptr, IDC_WAIT));
+    SetStatus(L"HASHING FOR VIRUSTOTAL...");
+    std::wstring hash;
+    bool ok = ComputeFileSha256(path, hash);
+    SetCursor(old);
+
+    if (!ok) {
+        SetStatus(L"VIRUSTOTAL: CANNOT READ FILE");
+        HsMessage(HSI_WARN, L"CANNOT HASH FILE",
+                  L"The selected file could not be read, so no SHA-256 could be produced.\r\n\r\n" + path);
+        return;
+    }
+
+    std::wstring url = L"https://www.virustotal.com/gui/file/" + hash;
+    ShellExecuteW(nullptr, L"open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    SetStatus(L"VIRUSTOTAL OPENED IN BROWSER");
+}
+
+enum : int {
+    CTX_COPY_SEL = 1, CTX_COPY_LINE, CTX_COPY_ALL,
+    CTX_OPEN, CTX_FOLDER, CTX_VIRUSTOTAL,
+    CTX_SAVE_TXT, CTX_SAVE_HTML, CTX_CLEAR
+};
+
+void ShowOutputMenu(HWND edit, POINT screenPt, bool fromKeyboard) {
+    POINT client = screenPt;
+    if (!fromKeyboard) ScreenToClient(edit, &client);
+
+    bool exists = false;
+    std::wstring line;
+    std::wstring token;
+    if (!fromKeyboard) token = PathTokenAt(edit, client, exists, line);
+
+    CHARRANGE sel{};
+    SendMessageW(edit, EM_EXGETSEL, 0, (LPARAM)&sel);
+    bool hasSel = sel.cpMax > sel.cpMin;
+
+    if (line.empty()) {
+        int start = 0;
+        int caret = (int)SendMessageW(edit, EM_LINEINDEX, (WPARAM)-1, 0);
+        line = LineAtChar(edit, caret < 0 ? 0 : caret, start);
+    }
+
+    HMENU m = CreatePopupMenu();
+    if (!m) return;
+
+    if (!token.empty()) {
+        std::wstring label = token;
+        if (label.size() > 90) label = L"..." + label.substr(label.size() - 87);
+        AppendMenuW(m, MF_STRING | MF_GRAYED, 0, (L"  " + label).c_str());
+        AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    }
+    AppendMenuW(m, MF_STRING | (hasSel ? MF_ENABLED : MF_GRAYED), CTX_COPY_SEL, L"Copy selection\tCtrl+C");
+    AppendMenuW(m, MF_STRING | (line.empty() ? MF_GRAYED : MF_ENABLED), CTX_COPY_LINE, L"Copy line");
+    AppendMenuW(m, MF_STRING, CTX_COPY_ALL, L"Copy all output");
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(m, MF_STRING | (exists ? MF_ENABLED : MF_GRAYED), CTX_OPEN, L"Open path");
+    AppendMenuW(m, MF_STRING | (exists ? MF_ENABLED : MF_GRAYED), CTX_FOLDER, L"Show in folder");
+    bool isFile = exists && !IsDirectoryPath(token);
+    AppendMenuW(m, MF_STRING | (isFile ? MF_ENABLED : MF_GRAYED), CTX_VIRUSTOTAL,
+                L"Search on &VirusTotal (SHA-256)");
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(m, MF_STRING, CTX_SAVE_TXT, L"Save report (TXT)...");
+    AppendMenuW(m, MF_STRING, CTX_SAVE_HTML, L"Save report (HTML)...");
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(m, MF_STRING | (g_scanning ? MF_GRAYED : MF_ENABLED), CTX_CLEAR, L"Clear output");
+
+    SetForegroundWindow(g_hWnd);
+    int cmd = (int)TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_LEFTALIGN | TPM_TOPALIGN,
+                                  screenPt.x, screenPt.y, 0, g_hWnd, nullptr);
+    DestroyMenu(m);
+
+    switch (cmd) {
+        case CTX_COPY_SEL:
+            SendMessageW(edit, WM_COPY, 0, 0);
+            SetStatus(L"SELECTION COPIED");
+            break;
+        case CTX_COPY_LINE:
+            CopyLineAt(edit, client, fromKeyboard);
+            SetStatus(L"LINE COPIED");
+            break;
+        case CTX_COPY_ALL:
+            CopyAllText(edit);
+            SetStatus(L"OUTPUT COPIED");
+            break;
+        case CTX_OPEN:
+            OpenToken(token, false);
+            break;
+        case CTX_FOLDER:
+            OpenToken(token, true);
+            break;
+        case CTX_VIRUSTOTAL:
+            SearchVirusTotal(token);
+            break;
+        case CTX_SAVE_TXT:
+            SaveReportDialog(false);
+            break;
+        case CTX_SAVE_HTML:
+            SaveReportDialog(true);
+            break;
+        case CTX_CLEAR:
+            ClearLog();
+            break;
+        default:
+            break;
+    }
+}
+
+LRESULT CALLBACK RichSubclass(HWND h, UINT msg, WPARAM w, LPARAM l, UINT_PTR, DWORD_PTR) {
+    // Ctrl+click opens a path. The mouse message carries the modifier in wParam
+    // (MK_CONTROL), so no GetKeyState/GetAsyncKeyState polling is needed - polling key
+    // state is a keylogger-shaped import for a memory scanner.
+    if (msg == WM_LBUTTONDOWN && (w & MK_CONTROL)) {
+        POINT pt{ GET_X_LPARAM(l), GET_Y_LPARAM(l) };
+        bool exists = false;
+        std::wstring line;
+        std::wstring token = PathTokenAt(h, pt, exists, line);
+        if (exists) {
+            OpenToken(token, false);
+            return 0;
+        }
+    }
+    if (msg == WM_CONTEXTMENU) {
+        bool keyboard = (l == (LPARAM)-1);
+        POINT pt{ GET_X_LPARAM(l), GET_Y_LPARAM(l) };
+        if (keyboard) {
+            RECT rc;
+            GetWindowRect(h, &rc);
+            pt.x = rc.left + S(24);
+            pt.y = rc.top + S(24);
+        }
+        ShowOutputMenu(h, pt, keyboard);
+        return 0;
+    }
+    return DefSubclassProc(h, msg, w, l);
+}
+
+LRESULT CALLBACK PidEditSubclass(HWND h, UINT msg, WPARAM w, LPARAM l, UINT_PTR, DWORD_PTR) {
+    if (msg == WM_KEYDOWN && w == VK_RETURN) {
+        SendMessageW(GetParent(h), WM_COMMAND, MAKEWPARAM(HS_BTN_RUN, BN_CLICKED), (LPARAM)h);
+        return 0;
+    }
+    return DefSubclassProc(h, msg, w, l);
+}
+
+LRESULT CALLBACK CmdEditSubclass(HWND h, UINT msg, WPARAM w, LPARAM l, UINT_PTR, DWORD_PTR) {
+    if (msg == WM_KEYDOWN && w == VK_RETURN) {
+        RunClassicCommandText();
+        return 0;
+    }
+    if (msg == WM_KEYDOWN && w == VK_ESCAPE) {
+        UpdateClassicPreview();
+        return 0;
+    }
+    return DefSubclassProc(h, msg, w, l);
+}
+
 
 void CreateChildControls(HWND h) {
     g_hCombo = CreateWindowExW(0, L"COMBOBOX", L"",
@@ -2717,6 +4407,43 @@ void CreateChildControls(HWND h) {
     g_hBtnElevate = CreateButton(h, HS_BTN_ELEVATE, L"ELEVATE", BTN_GHOST, Th::BG);
 
     g_hTgInsta = CreateToggle(h, HS_TG_INSTA, L"@hydraxff_yt", false, Th::HEADER);
+    g_hTgClassic = CreateToggle(h, HS_TG_CLASSIC, L"CLASSIC MODE", false, Th::HEADER);
+    g_hTgFocusUnsigned = CreateToggle(h, HS_TG_FOCUSUNSIGNED, L"FOCUS UNSIGNED", false, Th::HEADER);
+
+    g_hEditPid = CreateWindowExW(0, L"EDIT", L"", WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL,
+                                 0, 0, 100, 24, h, (HMENU)(INT_PTR)HS_EDIT_PID, g_hInst, nullptr);
+    SendMessageW(g_hEditPid, WM_SETFONT, (WPARAM)g_fMono, TRUE);
+    SendMessageW(g_hEditPid, EM_SETCUEBANNER, TRUE, (LPARAM)L"PID override (optional)");
+    SendMessageW(g_hEditPid, EM_SETLIMITTEXT, 120, 0);
+    SetWindowSubclass(g_hEditPid, PidEditSubclass, 3, 0);
+
+    // Classic-mode command presets, same owner-draw chrome as the process list.
+    g_hPreset = CreateWindowExW(0, L"COMBOBOX", L"",
+                                WS_CHILD | WS_TABSTOP | WS_VSCROLL |
+                                CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS,
+                                0, 0, 200, 220, h, (HMENU)(INT_PTR)HS_PRESET, g_hInst, nullptr);
+    SendMessageW(g_hPreset, WM_SETFONT, (WPARAM)g_fBody, TRUE);
+    SetWindowSubclass(g_hPreset, ComboSubclass, 2, 0);
+    SendMessageW(g_hPreset, CB_SETITEMHEIGHT, (WPARAM)-1, S(26));
+    SendMessageW(g_hPreset, CB_SETITEMHEIGHT, 0, S(26));
+    SendMessageW(g_hPreset, CB_SETMINVISIBLE, (WPARAM)8, 0);
+    for (int i = 0; i < kPresetCount; ++i)
+        SendMessageW(g_hPreset, CB_ADDSTRING, 0, (LPARAM)kPresets[i].label);
+    SendMessageW(g_hPreset, CB_SETCURSEL, (WPARAM)MatchPreset(), 0);
+
+    g_hCmd = CreateWindowExW(0, L"EDIT", L"", WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL,
+                             0, 0, 100, 24, h, (HMENU)(INT_PTR)HS_CMD, g_hInst, nullptr);
+    SendMessageW(g_hCmd, WM_SETFONT, (WPARAM)g_fMono, TRUE);
+    SendMessageW(g_hCmd, EM_SETCUEBANNER, TRUE, (LPARAM)L"moneta64.exe -m ioc -p <pid> -v detail");
+    SendMessageW(g_hCmd, EM_SETLIMITTEXT, 900, 0);
+    SetWindowSubclass(g_hCmd, CmdEditSubclass, 4, 0);
+
+    // Classic-only fields start parked outside the client area, exactly like the
+    // state ApplyClassicMode leaves them in. Creating them at 0,0 painted a stray
+    // field box over the header on first open until the mode was toggled.
+    HideControl(g_hEditPid);
+    HideControl(g_hPreset);
+    HideControl(g_hCmd);
 
     g_hRich = CreateWindowExW(0, L"RICHEDIT50W", L"",
                               WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_READONLY | ES_NOHIDESEL |
@@ -2733,6 +4460,65 @@ void CreateChildControls(HWND h) {
     cf.crTextColor = RGB(203, 213, 225);
     StringCchCopyW(cf.szFaceName, 32, L"Consolas");
     SendMessageW(g_hRich, EM_SETCHARFORMAT, SCF_ALL, (LPARAM)&cf);
+    SetWindowSubclass(g_hRich, RichSubclass, 1, 0);
+
+    // Second rich edit behind the same rect: COMMAND / DETAILS never disturb the live log.
+    g_hInfo = CreateWindowExW(0, L"RICHEDIT50W", L"",
+                              WS_CHILD | ES_MULTILINE | ES_READONLY | ES_NOHIDESEL |
+                              WS_VSCROLL | ES_AUTOVSCROLL,
+                              0, 0, 100, 100, h, (HMENU)(INT_PTR)HS_INFO, g_hInst, nullptr);
+    SendMessageW(g_hInfo, WM_SETFONT, (WPARAM)g_fMono, TRUE);
+    SendMessageW(g_hInfo, EM_SETBKGNDCOLOR, 0, (LPARAM)RGB(10, 15, 23));
+    SendMessageW(g_hInfo, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(S(10), S(10)));
+    SendMessageW(g_hInfo, EM_SETCHARFORMAT, SCF_ALL, (LPARAM)&cf);
+    SetWindowSubclass(g_hInfo, RichSubclass, 2, 0);
+
+    g_hTab[0] = CreateButton(h, HS_TAB_OUTPUT, L"OUTPUT", BTN_SEGMENT, Th::CARD);
+    g_hTab[1] = CreateButton(h, HS_TAB_CMD, L"COMMAND", BTN_SEGMENT, Th::CARD);
+    g_hTab[2] = CreateButton(h, HS_TAB_DETAILS, L"DETAILS", BTN_SEGMENT, Th::CARD);
+    BtnSetChecked(g_hTab[0], true);
+
+    // Every control explains itself on hover.
+    InitTooltips(h);
+    TipAdd(g_hEditSearch, L"Filter the process list.\nType part of a process name, a path, or a PID.");
+    TipAdd(g_hCombo, L"Target process.\nThe selected PID is filled into -p automatically.");
+    TipAdd(g_hBtnSelect, L"Pick a running executable from disk.\nIts process is selected in the list automatically.");
+    TipAdd(g_hBtnRefresh, L"Re-enumerate running processes.\nUse this after starting the target.");
+    TipAdd(g_hModeBtn[0], L"-m ioc\nScan only memory regions that already have suspicions attached. Fastest mode.");
+    TipAdd(g_hModeBtn[1], L"-m *\nScan every committed memory region. Slowest, most thorough.");
+    TipAdd(g_hModeBtn[2], L"-m region\nScan only the region that overlaps --address (and --region-size).");
+    TipAdd(g_hModeBtn[3], L"-m referenced\nScan regions referenced from the region at --address.");
+    TipAdd(g_hVerbBtn[0], L"-v surface\nOne line per suspicious region. Smallest output.");
+    TipAdd(g_hVerbBtn[1], L"-v detail\nAdds region metadata and IOC descriptions. Recommended.");
+    TipAdd(g_hVerbBtn[2], L"-v debug\nAdds engine internals. Very large output, use for troubleshooting.");
+    TipAdd(g_hEditAddr, L"--address\nStart address for REGION and REFERENCED modes.\nExample: 0x7FFE0000");
+    TipAdd(g_hEditSize, L"--region-size\nOptional size of the region at --address. Default is 0.");
+    TipAdd(g_hTgStats, L"--option statistics\nPrint permission statistics for the selected memory after the scan.");
+    TipAdd(g_hTgFromBase, L"--option from-base\nAlso select every subregion belonging to the allocation bases of the selected memory.");
+    TipAdd(g_hTgDump, L"-d\nDump all selected memory to disk after each process scan.\nThis can write a lot of data.");
+    TipAdd(g_hTgFilterAll, L"--filter *\nApply every IOC filter - shows malware plus unknown false positives.\nTurn this off to choose individual filters.");
+    TipAdd(g_hTgUnsigned, L"--filter unsigned-modules\nOnly image regions backed by unsigned PE files.");
+    TipAdd(g_hTgMetadata, L"--filter metadata-modules\nOnly image regions from signed Windows metadata PE files on disk.");
+    TipAdd(g_hTgClrHeap, L"--filter clr-heap\nNative executable heaps created during CLR initialisation.");
+    TipAdd(g_hTgClrPrvx, L"--filter clr-prvx\nManaged heaps associated with active CLR heaps and JIT code.");
+    TipAdd(g_hTgWow64, L"--filter wow64-init\nIOCs from Wow64 initialisation, such as modified system library code.");
+    TipAdd(g_hBtnRun, L"Start the analysis.\nThe chosen process is filled into -p; progress streams into OUTPUT.");
+    TipAdd(g_hBtnStop, L"Stop the running engine.\nPartial output is kept and can still be saved.");
+    TipAdd(g_hBtnSaveTxt, L"Save the full report as plain text.\nThe viewer limit does not apply to the saved file.");
+    TipAdd(g_hBtnSaveHtml, L"Save the full report as colour-coded HTML.");
+    TipAdd(g_hBtnClear, L"Clear the output view and the result counters.\nSaved reports are not touched.");
+    TipAdd(g_hBtnElevate, L"Relaunch as Administrator.\nRequired to scan protected processes.");
+    TipAdd(g_hTgInsta, L"Open @hydraxff_yt on Instagram.");
+    TipAdd(g_hTgClassic, L"Classic mode - the plain moneta64.exe workflow.\nOne PID/process box, RUN, SAVE. No custom panels.");
+    TipAdd(g_hTgFocusUnsigned, L"Focus unsigned modules.\nDims routine engine output and highlights unsigned-module evidence and IOC findings.");
+    TipAdd(g_hEditPid, L"Optional target override for classic mode.\nEnter a PID, a process name, or *.\nLeave it blank to scan the process selected in the list.");
+    TipAdd(g_hPreset, L"Command preset.\nFills the COMMAND box with a ready-to-run moneta64.exe line.\nThe selected process replaces <pid>.");
+    TipAdd(g_hCmd, L"Classic command line.\nEdit any argument and press Enter to run it, or Esc to restore the current settings.\n-p is filled from the selected process.");
+    TipAdd(g_hTab[0], L"OUTPUT\nLive engine output. Right-click a path to open it, or Ctrl+click it.");
+    TipAdd(g_hTab[1], L"COMMAND\nExact Moneta command line plus every argument and its current value.");
+    TipAdd(g_hTab[2], L"DETAILS\nTarget, scan settings, host information and last-run result.");
+    TipAdd(g_hRich, L"Live scan output.\nRight-click a file path for Open / VirusTotal / Copy, or Ctrl+click to open it.");
+    TipAdd(g_hInfo, L"Command and detail view.\nRight-click to copy; Ctrl+A selects everything.");
 
     EnableWindow(g_hBtnStop, FALSE);
     EnableWindow(g_hBtnSaveTxt, FALSE);
@@ -2746,6 +4532,26 @@ void HandleCommand(WPARAM w, LPARAM l) {
     (void)l;
 
     if (id == HS_COMBO && code == CBN_SELCHANGE) { OnComboChanged(); return; }
+    if (id == HS_PRESET && code == CBN_SELCHANGE) {
+        ApplyPreset((int)SendMessageW(g_hPreset, CB_GETCURSEL, 0, 0));
+        return;
+    }
+    if (id == HS_CMD && code == EN_CHANGE) {
+        if (!g_cmdSync) MarkCustomPreset();
+        return;
+    }
+    if (id == HS_CMD && code == EN_KILLFOCUS) {
+        wchar_t buf[1200] = {};
+        GetWindowTextW(g_hCmd, buf, 1200);
+        std::wstring line = Trim(buf);
+        if (!line.empty() && line != BuildMonetaCommandLine()) ApplyCommandText(line);
+        return;
+    }
+    if (id == HS_EDIT_PID && code == EN_CHANGE) {
+        MarkCustomPreset();
+        UpdateClassicPreview();
+        return;
+    }
     if (id == HS_EDIT_SEARCH && code == EN_CHANGE) {
         ApplyProcFilter(g_targetPid, g_targetAll);
         InvalidateRect(g_hWnd, &g_L.cardTarget, FALSE);
@@ -2755,7 +4561,15 @@ void HandleCommand(WPARAM w, LPARAM l) {
     switch (id) {
         case HS_BTN_SELECT: SelectExeDialog(); break;
         case HS_BTN_REFRESH: RefreshProcessList(); SetStatus(L"PROCESS LIST REFRESHED"); break;
-        case HS_BTN_RUN: StartScan(); break;
+        case HS_BTN_RUN:
+            if (g_classic && !ResolveClassicTarget()) {
+                HsMessage(HSI_WARN, L"TARGET NOT FOUND",
+                          L"Enter a running PID or process name in the classic box.\r\n"
+                          L"Use * to scan every accessible process.");
+                break;
+            }
+            StartScan();
+            break;
         case HS_BTN_STOP: StopScan(); break;
         case HS_BTN_SAVE_TXT: SaveReportDialog(false); break;
         case HS_BTN_SAVE_HTML: SaveReportDialog(true); break;
@@ -2768,7 +4582,36 @@ void HandleCommand(WPARAM w, LPARAM l) {
         case HS_VERB0: SelectVerb(0); break;
         case HS_VERB1: SelectVerb(1); break;
         case HS_VERB2: SelectVerb(2); break;
-        case HS_TG_FILTERALL: UpdateToggleAvailability(); break;
+        case HS_TG_FILTERALL:
+            UpdateToggleAvailability();
+            MarkCustomPreset();
+            UpdateClassicPreview();
+            if (g_tab) BuildInfoView();
+            break;
+        case HS_TG_STATS:
+        case HS_TG_FROMBASE:
+        case HS_TG_DUMP:
+        case HS_TG_UNSIGNED:
+        case HS_TG_METADATA:
+        case HS_TG_CLRHEAP:
+        case HS_TG_CLRPRVX:
+        case HS_TG_WOW64:
+            MarkCustomPreset();
+            UpdateClassicPreview();
+            if (g_tab) BuildInfoView();
+            break;
+        case HS_TAB_OUTPUT: ShowTab(0); break;
+        case HS_TAB_CMD: ShowTab(1); break;
+        case HS_TAB_DETAILS: ShowTab(2); break;
+        case HS_TG_CLASSIC:
+            ApplyClassicMode();
+            if (g_tab) BuildInfoView();
+            break;
+        case HS_TG_FOCUSUNSIGNED:
+            g_focusUnsigned = TgGetOn(g_hTgFocusUnsigned);
+            RebuildLiveView();
+            SetStatus(g_focusUnsigned ? L"FOCUS: UNSIGNED MODULES" : L"READY");
+            break;
         case HS_TG_INSTA:
             TgSetOn(g_hTgInsta, true);
             OpenInstagram();
@@ -2790,8 +4633,8 @@ void DrawComboItem(LPDRAWITEMSTRUCT dis) {
 
     wchar_t text[512] = {};
     int idx = (int)dis->itemID;
-    if (idx == -1) idx = (int)SendMessageW(g_hCombo, CB_GETCURSEL, 0, 0);
-    if (idx >= 0) SendMessageW(g_hCombo, CB_GETLBTEXT, (WPARAM)idx, (LPARAM)text);
+    if (idx == -1) idx = (int)SendMessageW(dis->hwndItem, CB_GETCURSEL, 0, 0);
+    if (idx >= 0) SendMessageW(dis->hwndItem, CB_GETLBTEXT, (WPARAM)idx, (LPARAM)text);
 
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, selected ? Th::ACCENT : Th::TEXT);
@@ -2809,9 +4652,19 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
             g_hWnd = h;
             CreateChildControls(h);
             RefreshProcessList();
-            LayoutControls(h, S(1360), S(900));
+            // Lay out from the real client area: the window may be smaller than the
+            // nominal 1360x900 (DPI scaling, small screens), and laying out for the
+            // nominal size clipped the right column and the footer on first open.
+            RECT rc{};
+            GetClientRect(h, &rc);
+            LayoutControls(h, rc.right, rc.bottom);
+            // Make the initial tab state explicit instead of relying on creation flags,
+            // so the first paint matches what a tab switch produces.
+            ShowTab(0);
             SetStatus(L"READY");
             SetTimer(h, 1, 500, nullptr);
+            RpcStartWorker();
+            RpcPublishIdle();
             return 0;
         }
         case WM_SIZE: {
@@ -2819,7 +4672,10 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
                 RECT rc;
                 GetClientRect(h, &rc);
                 LayoutControls(h, rc.right, rc.bottom);
-                InvalidateRect(h, nullptr, FALSE);
+                // Repaint the frame and all children so a resize never leaves a
+                // strip of the previous layout behind.
+                RedrawWindow(h, nullptr, nullptr,
+                             RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
             }
             return 0;
         }
@@ -2836,7 +4692,10 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
 
             // field backdrops behind edits & combo (drawn after the cards so the border stays visible)
             auto fieldFor = [&](HWND ctl, bool combo) {
-                if (!ctl) return;
+                // Hidden controls keep their last rect; drawing a backdrop for them left a
+                // stray filled box at 0,0 on the very first paint (classic-only fields are
+                // created hidden there until HideControl moves them away).
+                if (!ctl || !IsWindowVisible(ctl)) return;
                 RECT field{};
                 GetWindowRect(ctl, &field);
                 MapWindowPoints(HWND_DESKTOP, h, (LPPOINT)&field, 2);
@@ -2850,6 +4709,9 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
             fieldFor(g_hEditSearch, false);
             fieldFor(g_hEditAddr, false);
             fieldFor(g_hEditSize, false);
+            fieldFor(g_hEditPid, false);
+            fieldFor(g_hPreset, true);
+            fieldFor(g_hCmd, false);
             BitBlt(dc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY);
             SelectObject(mem, old);
             DeleteObject(bmp);
@@ -2873,7 +4735,7 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
         }
         case WM_DRAWITEM: {
             auto* dis = (DRAWITEMSTRUCT*)l;
-            if (dis->CtlID == HS_COMBO) {
+            if (dis->CtlID == HS_COMBO || dis->CtlID == HS_PRESET) {
                 DrawComboItem(dis);
                 return TRUE;
             }
@@ -2896,17 +4758,38 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
             return 0;
         case WM_TIMER:
             if (w == 1) {
-                RECT inv[3] = { g_L.infoCard, g_L.actionRow, g_L.logCard };
-                for (const auto& r : inv) {
-                    RECT x = r;
+                RECT inv[3];
+                int n = 0;
+                if (g_classic) {
+                    inv[n++] = g_L.classicStatus;
+                } else {
+                    inv[n++] = g_L.infoCard;
+                    inv[n++] = g_L.actionRow;
+                }
+                inv[n++] = g_L.logCard;
+                for (int i = 0; i < n; ++i) {
+                    RECT x = inv[i];
                     InvalidateRect(h, &x, FALSE);
                 }
+                if (g_scanning) RpcPublishScanning();
             }
             return 0;
         case WM_GETMINMAXINFO: {
             auto* mmi = (MINMAXINFO*)l;
-            mmi->ptMinTrackSize.x = S(1180);
-            mmi->ptMinTrackSize.y = S(880);
+            int minW = S(1180), minH = S(880);
+            // Never demand more room than the desktop can give: on a small or
+            // high-DPI screen the old minimum pushed the footer off-screen.
+            RECT wa{};
+            if (SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0)) {
+                int availW = wa.right - wa.left;
+                int availH = wa.bottom - wa.top;
+                if (minW > availW - S(40)) minW = availW - S(40);
+                if (minH > availH - S(60)) minH = availH - S(60);
+            }
+            if (minW < S(860)) minW = S(860);
+            if (minH < S(700)) minH = S(700);
+            mmi->ptMinTrackSize.x = minW;
+            mmi->ptMinTrackSize.y = minH;
             return 0;
         }
         case WM_CLOSE:
@@ -2919,6 +4802,7 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
             return 0;
         case WM_DESTROY:
             KillTimer(h, 1);
+            RpcStopWorker();
             if (g_scanning) {
                 g_stopRequested = true;
                 if (g_hProc) TerminateProcess(g_hProc, 0);
@@ -2950,6 +4834,26 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nShow) {
     g_hInst = hInst;
     SetProcessDPIAware();
 
+    // One window only. A second copy would stack on top of the first and leave a
+    // half-covered header (the "double title" glitch) until one of them is closed,
+    // so activate the running window and exit instead. The class check also catches
+    // an instance from an older build that does not hold the mutex yet.
+    if (HWND existing = FindWindowW(L"HyperSenseMain", nullptr)) {
+        if (IsIconic(existing)) ShowWindow(existing, SW_RESTORE);
+        SetForegroundWindow(existing);
+        return 0;
+    }
+    HANDLE single = CreateMutexW(nullptr, FALSE, L"Local\\HyperSense.SingleInstance");
+    if (single && GetLastError() == ERROR_ALREADY_EXISTS) {
+        HWND existing = FindWindowW(L"HyperSenseMain", nullptr);
+        if (existing) {
+            if (IsIconic(existing)) ShowWindow(existing, SW_RESTORE);
+            SetForegroundWindow(existing);
+        }
+        CloseHandle(single);
+        return 0;
+    }
+
     HDC screen = GetDC(nullptr);
     if (screen) {
         g_dpi = GetDeviceCaps(screen, LOGPIXELSX);
@@ -2957,10 +4861,19 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nShow) {
     }
     if (g_dpi <= 0) g_dpi = 96;
 
+    // Test hook: render at a forced scale so the 125%/150% layout can be checked
+    // without changing the desktop display setting.
+    wchar_t dpiEnv[16] = {};
+    if (GetEnvironmentVariableW(L"HYPERSENSE_DPI", dpiEnv, 16) > 0) {
+        int forced = _wtoi(dpiEnv);
+        if (forced >= 72 && forced <= 288) g_dpi = forced;
+    }
+
     CreateFonts();
     InitCommonControls();
     LoadLibraryW(L"Msftedit.dll");
     InitSystemInfo();
+    RpcLoadConfig();
 
     WNDCLASSEXW wc{};
     wc.cbSize = sizeof(wc);
@@ -2993,11 +4906,24 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nShow) {
     dc.lpszClassName = kDlgClass;
     RegisterClassExW(&dc);
 
+    // Open at a size that always fits the desktop, centred in the work area.
+    RECT wa{};
+    SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0);
+    int availW = wa.right - wa.left;
+    int availH = wa.bottom - wa.top;
+    if (availW <= 0) availW = GetSystemMetrics(SM_CXSCREEN);
+    if (availH <= 0) availH = GetSystemMetrics(SM_CYSCREEN);
+
     int w = S(1360), hgt = S(900);
-    int sw = GetSystemMetrics(SM_CXSCREEN), sh = GetSystemMetrics(SM_CYSCREEN);
-    int x = (sw - w) / 2, y = (sh - hgt) / 2;
-    if (x < 0) x = 0;
-    if (y < 0) y = 0;
+    if (w > availW - S(40)) w = availW - S(40);
+    if (hgt > availH - S(60)) hgt = availH - S(60);
+    if (w < S(860)) w = S(860);
+    if (hgt < S(700)) hgt = S(700);
+
+    int x = wa.left + (availW - w) / 2;
+    int y = wa.top + (availH - hgt) / 2;
+    if (x < wa.left) x = wa.left;
+    if (y < wa.top) y = wa.top;
 
     HWND hwnd = CreateWindowExW(0, wc.lpszClassName,
                                 L"HYPERSENSEGLOBAL\u2122  \u2014  Live Usermode Memory Analysis Tool V1",
@@ -3010,6 +4936,15 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nShow) {
     DwmSetWindowAttribute(hwnd, 19, &dark, sizeof(dark));
 
     ShowWindow(hwnd, nShow);
+    // Windows may adjust the size when the window is shown; lay out again from the
+    // final client area and paint everything before the first frame is visible.
+    {
+        RECT cr{};
+        GetClientRect(hwnd, &cr);
+        LayoutControls(hwnd, cr.right, cr.bottom);
+        RedrawWindow(hwnd, nullptr, nullptr,
+                     RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+    }
     UpdateWindow(hwnd);
 
     MSG msg;

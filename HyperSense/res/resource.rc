@@ -4,8 +4,8 @@
 1 24 "app.manifest"
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 1,0,1,0
- PRODUCTVERSION 1,0,1,0
+ FILEVERSION 1,0,1,1
+ PRODUCTVERSION 1,0,1,1
  FILEFLAGSMASK 0x3fL
  FILEFLAGS 0x0L
  FILEOS 0x40004L
@@ -17,15 +17,15 @@ BEGIN
         BLOCK "040904b0"
         BEGIN
             VALUE "CompanyName", "HYPERSENSEGLOBAL"
-            VALUE "FileDescription", "HYPERSENSEGLOBAL Live Usermode Memory Analysis Tool V1"
-            VALUE "FileVersion", "1.0.1.0"
+            VALUE "FileDescription", "HyperSense - Live Usermode Memory Analysis Tool (x64)"
+            VALUE "FileVersion", "1.0.1.1"
             VALUE "InternalName", "HyperSense64"
+            VALUE "LegalCopyright", "Copyright (C) 2026 HYPERSENSEGLOBAL. Moneta engine (C) Forrest Orr & Gabriel Landau, GPLv3."
+            VALUE "LegalTrademarks", "HYPERSENSEGLOBAL(TM)"
             VALUE "OriginalFilename", "HyperSense64.exe"
-            VALUE "ProductName", "HYPERSENSEGLOBAL V1"
-            VALUE "ProductVersion", "1.0.1.0"
-            VALUE "LegalCopyright", "Engine (C) Forrest Orr & Gabriel Landau - GPLv3 | Front-end by AG HYDRAXFF"
-            VALUE "LegalTrademarks", "HYPERSENSEGLOBAL"
-            VALUE "Comments", "Usermode memory analysis front-end for the open-source Moneta engine (github.com/forrest-orr/moneta, GPLv3). Dev: @hydraxff_yt"
+            VALUE "ProductName", "HYPERSENSEGLOBAL HyperSense"
+            VALUE "ProductVersion", "1.0.1.1"
+            VALUE "Comments", "Live usermode memory analysis front-end for the open-source Moneta engine (GPLv3). Reads only the process the user selects and writes only the report the user saves. https://github.com/hypersenseindia/hypersense-memory-analyzer"
         END
     END
     BLOCK "VarFileInfo"
