@@ -28,6 +28,12 @@ The scanner is **compiled into the executable** — there is no second binary to
 `Moneta64.exe` to keep next to it. The GUI talks to it as a hidden child process, so a
 crash inside the scanner can never take the window down with it.
 
+**Download (v1.0.2)** — four files, GUI and CLASSIC, each signed and unsigned, with their
+SHA-256 in [`SHA256SUMS.txt`](https://github.com/hypersenseindia/hypersense-memory-analyzer/blob/main/HyperSense/HXG%20SIGNED/SHA256SUMS.txt):
+
+* [`HyperSense/HXG SIGNED/`](https://github.com/hypersenseindia/hypersense-memory-analyzer/tree/main/HyperSense/HXG%20SIGNED) — in the repository, click a file and use *Download*
+* [Releases](https://github.com/hypersenseindia/hypersense-memory-analyzer/releases) — the same files as release assets
+
 <p align="center">
   <img src="docs/assets/scan-results.png" alt="HYPERSENSEGLOBAL scanning explorer.exe" width="880">
 </p>
