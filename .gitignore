@@ -51,3 +51,7 @@ Tests/**/obj/
 *.crt
 .env
 *.token
+
+# ---- Release binaries (committed on purpose, see docs/WHATS_NEW.md) ----
+!HyperSense/HXG SIGNED/*.exe
+!HyperSense/HXG SIGNED/SHA256SUMS.txt
