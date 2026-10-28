@@ -31,8 +31,25 @@ crash inside the scanner can never take the window down with it.
 **Download (v1.0.2)** — four files, GUI and CLASSIC, each signed and unsigned, with their
 SHA-256 in [`SHA256SUMS.txt`](https://github.com/hypersenseindia/hypersense-memory-analyzer/blob/main/HyperSense/releases/1.0.2/SHA256SUMS.txt):
 
+| File | Size | Signature | SHA-256 |
+| --- | --- | --- | --- |
+| `HyperSense64.exe` | 1,852,920 | `CN=HYPERSENSEGLOBALT` | `bcd48830528cb21166c4370c7a7e90b93e74ee12b0ede23d96e10fa15deb4df0` |
+| `HyperSense64-unsigned.exe` | 1,845,760 | none | `568a1b428ddf4e46529d503a2dcd4b25fbaac708ed8312e0da426201d31b5f7a` |
+| `HyperSense64Classic.exe` | 1,852,920 | `CN=HYPERSENSEGLOBALT` | `eb3764631f6d314f88271af0c039989307cc5da2ed9dc65e1a3cc7938f278a4a` |
+| `HyperSense64Classic-unsigned.exe` | 1,845,760 | none | `53d1e04483a9ec76baf2012e9d01c15904efe09be86458b6bc56d8f4b9a69542` |
+
 * [`HyperSense/releases/1.0.2/`](https://github.com/hypersenseindia/hypersense-memory-analyzer/tree/main/HyperSense/releases/1.0.2) — in the repository, click a file and use *Download*
 * [Releases](https://github.com/hypersenseindia/hypersense-memory-analyzer/releases) — the same files as release assets
+
+Older signed builds are kept in the repository as they shipped — **not** the current release:
+
+| Folder | File | Build |
+| --- | --- | --- |
+| [`SIGNED! BY HXG/`](https://github.com/hypersenseindia/hypersense-memory-analyzer/tree/main/SIGNED!%20BY%20HXG) | `HyperSense64 BY HXG!.exe` | **1.0.1.0**, 1,756,840, `c8dfaf8a…74a6` — the v1.0.1 release binary, unchanged |
+| [`HyperSense/HXG SIGNED/`](https://github.com/hypersenseindia/hypersense-memory-analyzer/tree/main/HyperSense/HXG%20SIGNED) | `HyperSense64 BY HXG!  1.0.1.exe` | **1.0.1.0**, 1,756,840, `c8dfaf8a…74a6` — same bytes as above |
+| | `HyperSense64 Classic LATEST 1.0.2.exe` | **file version 1.0.1.1**, 1,853,096, `108160ae…9d7c` — the old 1.0.1.1 GUI build; the file name says 1.0.2 Classic but the binary is 1.0.1.1 |
+
+For 1.0.2 always use `HyperSense/releases/1.0.2/` or the release assets above.
 
 <p align="center">
   <img src="docs/assets/scan-results.png" alt="HYPERSENSEGLOBAL scanning explorer.exe" width="880">
