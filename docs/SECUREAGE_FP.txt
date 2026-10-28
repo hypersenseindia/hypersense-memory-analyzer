@@ -1,19 +1,20 @@
-﻿SecureAge "Malicious" false positive - submission notes
+SecureAge "Malicious" false positive - submission notes
 ======================================================
 
 Vendor : SecureAge Technology (VirusTotal engine label: "Acronis (Static ML)")
-Verdict: Malicious  (the only engine flagging the current build - 1/71 on VirusTotal)
-File   : HyperSense64.exe  v1.0.1.1  x64  peexe  1,845,760 bytes (1.76 MB)
-SHA-256: a35eaa0e8ca83c3f2372b17ae6d92c65d59bd1384af28028b406d488f26ffeed
+Verdict: Malicious  (the only engine flagging the build that was scanned)
+File   : HyperSense64.exe  v1.0.1.1  x64  peexe  1,853,096 bytes (1.77 MB)
+SHA-256: 108160ae2315ebe110cac9bca6156e1ddeb81677f857e21cff6f7067d7eb9d7c
+Signed : Authenticode, CN=HYPERSENSEGLOBALT, SHA-256, DigiCert RFC 3161 timestamp
 
 Where to submit
 ---------------
 https://www.secureage.com/contact-us
   -> scroll to "Submit false positive"
   -> "Report false positive"
-  (form takes a Supporting File up to 4 MB - the exe is 1.76 MB, so upload the exe itself)
+  (form takes a Supporting File up to 4 MB - the exe is 1.77 MB, so upload the exe itself)
 
-Supporting File: the HyperSense64.exe that hashes to a35eaa0e... (do not rebuild first)
+Supporting File: the HyperSense64.exe that hashes to 108160ae... (do not rebuild first)
 
 Text for "Describe Your Issue"
 ------------------------------
@@ -31,9 +32,11 @@ credential access, no process injection, no code written outside the report the
 user explicitly saves. The GUI starts asInvoker; elevation is opt-in via a
 button. It is statically linked, not packed, and contains no obfuscated strings.
 
-File: HyperSense64.exe v1.0.1.1 (x64, 1,845,760 bytes, 1.76 MB)
-SHA-256: a35eaa0e8ca83c3f2372b17ae6d92c65d59bd1384af28028b406d488f26ffeed
-VirusTotal: 1/71 on this build - this engine is the only one that flags it.
+File: HyperSense64.exe v1.0.1.1 (x64, 1,853,096 bytes, 1.77 MB)
+SHA-256: 108160ae2315ebe110cac9bca6156e1ddeb81677f857e21cff6f7067d7eb9d7c
+Signed: Authenticode (CN=HYPERSENSEGLOBALT), SHA-256, RFC 3161 timestamped.
+VirusTotal: 1/71 on the unsigned build of the same code - this engine is the only one
+that flags it. Re-scan after signing; the hash changed.
 Engine source: https://github.com/forrest-orr/moneta
 
 Please reclassify this file and remove the "Malicious" detection.
@@ -42,5 +45,5 @@ Notes
 -----
 * Submit the exact hash above. Any rebuild changes it and you start over.
 * Microsoft flags the same build as Program:Win32/Wacapew.Cml (ML, PUA); that case is in MICROSOFT_FP.txt.
-* 1/71 is effectively clean - reclassifying these two vendors is cosmetic, not a
-  blocker, unless your users actually run SecureAge CatchPulse or rely on Defender ML.
+* 1/71 is effectively clean - reclassifying this engine is cosmetic, not a
+  blocker, unless your users actually run SecureAge CatchPulse.

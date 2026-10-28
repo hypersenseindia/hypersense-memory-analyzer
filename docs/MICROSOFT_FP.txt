@@ -1,17 +1,20 @@
-﻿Microsoft Defender "Program:Win32/Wacapew.Cml" false positive - submission notes
+Microsoft Defender "Program:Win32/Wacapew.Cml" false positive - submission notes
 ================================================================================
 
 Vendor : Microsoft (Microsoft Defender Antivirus, machine-learning verdict)
 Verdict: Program:Win32/Wacapew.Cml   (PUA / "program" class, not a trojan)
-Status : Microsoft is CLEAN on the current build (1/71 on VirusTotal, 2026-10-28).
-         Keep this packet for the next build that gets flagged; do not submit a clean file.
+Status : Microsoft was CLEAN on the 2026-10-28 scan of the unsigned build
+         (1/71 on VirusTotal). The release binary is now Authenticode-signed,
+         which changes the hash - re-scan the hash below before claiming the
+         same result. Keep this packet for any build that comes back flagged.
 Earlier: Trojan:Win32/Wacatac.C!ml and Trojan:Win32/Wacatac.Biml were returned for
          previous builds (b2cc6873..., a91e4462...); d6036fb5... (same version, previous
          metadata wording) got Program:Win32/Wacapew.Cml. The name changes from build
          to build; it is the same cloud ML model scoring the same kind of tool.
 Other  : SecureAge - "Malicious" (the only other engine; see SECUREAGE_FP.txt)
-File   : HyperSense64.exe  v1.0.1.1  x64  peexe  1,845,760 bytes (1.76 MB)
-SHA-256: a35eaa0e8ca83c3f2372b17ae6d92c65d59bd1384af28028b406d488f26ffeed
+File   : HyperSense64.exe  v1.0.1.1  x64  peexe  1,853,096 bytes (1.77 MB)
+SHA-256: 108160ae2315ebe110cac9bca6156e1ddeb81677f857e21cff6f7067d7eb9d7c
+Signed : Authenticode, CN=HYPERSENSEGLOBALT, SHA-256, DigiCert RFC 3161 timestamp
          Report the build you actually ship - the hash in this file must match it.
 
 Where to submit
@@ -25,8 +28,8 @@ https://www.microsoft.com/en-us/wdsi/filesubmission
   4. Found in MS network ...... No
   5. Number of affected devices  1 - 100 (or the real number)
   6. Priority ................. Medium
-  7. Select the file .......... the HyperSense64.exe that hashes to a35eaa0e...
-                                 (1.76 MB, under the 50 MB limit - no archive needed)
+  7. Select the file .......... the HyperSense64.exe that hashes to 108160ae...
+                                 (1.77 MB, under the 50 MB limit - no archive needed)
   8. "What do you believe this file is?"
         Incorrectly detected as malware/malicious
   9. Detection name ........... Program:Win32/Wacapew.Cml
@@ -59,8 +62,8 @@ only VirtualQueryEx and ReadProcessMemory are used.
 
 Build: x64, statically linked MinGW/UCRT, not packed, no UPX, no obfuscated or
 encrypted strings, complete version resource (HYPERSENSEGLOBAL), asInvoker
-manifest. File: 1,845,760 bytes x64.
-SHA-256: a35eaa0e8ca83c3f2372b17ae6d92c65d59bd1384af28028b406d488f26ffeed
+manifest, Authenticode-signed. File: 1,853,096 bytes x64.
+SHA-256: 108160ae2315ebe110cac9bca6156e1ddeb81677f857e21cff6f7067d7eb9d7c
 VirusTotal: engine counts change per build - check the report for the SHA-256 above.
 
 Please reclassify this file and remove the Program:Win32/Wacapew.Cml detection.

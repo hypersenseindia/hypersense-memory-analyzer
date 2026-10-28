@@ -2,18 +2,20 @@
 
 `HyperSense64.exe` is a **memory scanner**. That is the whole point of the tool: it opens other
 processes with `PROCESS_VM_READ`, walks their PEB/TEB, calls `VirtualQueryEx`, reads module
-images and enables `SeDebugPrivilege` before a scan. Unsigned binaries that do this are
-routinely scored as PUA / hacktool by machine-learning engines.
+images and enables `SeDebugPrivilege` before a scan. Binaries that do this are routinely
+scored as PUA / hacktool by machine-learning engines — signed or not.
 
 Typical report for this tool:
 
 | Vendor | Verdict | What it actually is |
 | --- | --- | --- |
-| Microsoft | **clean** on the current build | earlier builds were scored `Program:Win32/Wacapew.Cml` (PUA) and `Trojan:Win32/Wacatac.C!ml` / `Wacatac.Biml` for the same code |
-| SecureAge | `Malicious` | generic static-ML verdict on an unsigned binary |
+| Microsoft | **clean** on the unsigned build of this code | earlier builds were scored `Program:Win32/Wacapew.Cml` (PUA) and `Trojan:Win32/Wacatac.C!ml` / `Wacatac.Biml` for the same code |
+| SecureAge | `Malicious` | generic static-ML verdict |
 
-Everything else comes back clean (the current build is 1/71 on VirusTotal), and the
+Everything else comes back clean (1/71 on VirusTotal for the unsigned build), and the
 Moneta engine it embeds is public GPLv3 source: <https://github.com/forrest-orr/moneta>.
+The released binary is the same code with an Authenticode signature added, so its hash —
+`108160ae…` — needs its own scan before anyone quotes a count for it.
 
 > A 1/71 result is **not** evidence of malware, but it is worth fixing properly. Do **not**
 > try to "evade" it with packers, crypters, string obfuscation or anti-VM tricks - those
@@ -34,6 +36,12 @@ An Authenticode signature binds the file to a publisher identity. SmartScreen st
 it as anonymous, and AV vendors can whitelist the certificate instead of the hash.
 An **EV code-signing certificate** is the fastest route to SmartScreen reputation.
 
+The 1.0.1.1 release binary **is signed**: `CN=HYPERSENSEGLOBALT`, SHA-256, DigiCert RFC 3161
+timestamp, `Get-AuthenticodeSignature` reports `Valid`. That certificate is **self-signed**,
+which is honest but local: machines that have not installed its root still show *Unknown
+publisher*, and no reputation accrues to it. Buying an OV/EV certificate from a CA and
+re-signing the same bytes is the upgrade — the signature is the only thing that changes.
+
 ```powershell
 # from HyperSense\
 .\tools\sign.ps1 -Pfx C:\certs\hypersense.pfx -Password 'pfx-password'
@@ -46,7 +54,8 @@ An **EV code-signing certificate** is the fastest route to SmartScreen reputatio
 ```
 
 The script uses `signtool` from the Windows SDK, SHA-256 + RFC 3161 timestamping (DigiCert),
-and verifies with `/pa` when done. Sign the **final** build - every rebuild changes the hash.
+and verifies with `/pa` when done. Sign the **final** build - every rebuild changes the hash,
+and signing changes it too, so hash and document the signed file, not the one before it.
 
 ## 2. Report the false positive to the vendors
 

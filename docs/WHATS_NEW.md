@@ -24,8 +24,9 @@ this build adds or changes. The full item-by-item history is in
 | SHA-256 (VirusTotal) | CryptoAPI (`CryptAcquireContext` / `CryptHashData`) | local FIPS 180-4 implementation, `src/sha256.h` |
 | RPC debug log | `%TEMP%\hypersense_rpc.log` | `hypersense_rpc.log` next to the executable |
 | File details | `1.0.0.0`, partial metadata | **`1.0.1.1`**, full Details tab: company, product, description, copyright, trademark, original filename, comments |
-| SecureAge | `Malicious` | `Malicious` (the only remaining flag) |
-| Microsoft | `2/70` flag (`Program:Win32/Wacapew.Cml`) | **clean — 1/71 on VirusTotal** |
+| Signature | none (unsigned) | **Authenticode-signed**, `CN=HYPERSENSEGLOBALT`, SHA-256, DigiCert RFC 3161 timestamp |
+| SecureAge | `Malicious` | `Malicious` (the only remaining flag on the unsigned build) |
+| Microsoft | `2/70` flag (`Program:Win32/Wacapew.Cml`) | **clean — 1/71 on VirusTotal** (unsigned build of the same code) |
 
 ## Why the import table changed
 
@@ -42,7 +43,18 @@ features were re-implemented without those imports, with no functional loss:
 ```powershell
 (Get-Item .\HyperSense64.exe).VersionInfo | Format-List CompanyName,ProductName,FileDescription,FileVersion,LegalCopyright,Comments
 Get-FileHash .\HyperSense64.exe -Algorithm SHA256
+Get-AuthenticodeSignature .\HyperSense64.exe | Format-List Status,@{n='SignedBy';e={$_.SignerCertificate.Subject}}
 ```
 
-A rebuild changes the SHA-256 — and, with Microsoft's cloud ML, the verdict. Ship the build you
-scanned.
+The signed release binary — `HyperSense\HXG SIGNED\HyperSense64 HXG SIGNED LATEST.exe`:
+
+```
+SHA-256  108160ae2315ebe110cac9bca6156e1ddeb81677f857e21cff6f7067d7eb9d7c
+Size     1,853,096 bytes
+Signed   CN=HYPERSENSEGLOBALT (self-signed), SHA-256, DigiCert RFC 3161 timestamp
+```
+
+The signature is the only difference from the unsigned `a35eaa0e…` build: 6 bytes of PE
+checksum plus the certificate table, byte-identical everywhere else. A rebuild changes the
+SHA-256 — and, with Microsoft's cloud ML, the verdict. Ship the build you scanned; after
+signing, re-scan, because the hash is what the engines score.

@@ -142,12 +142,14 @@ porting it to MinGW are described in **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.
 ## Antivirus and false positives
 
 A memory scanner opens other processes with `PROCESS_VM_READ`, walks `PEB`/`TEB` and
-enables `SeDebugPrivilege` before a scan. Unsigned binaries doing that are regularly
-scored as PUA/hacktool by machine-learning engines.
+enables `SeDebugPrivilege` before a scan. Binaries doing that are regularly scored as
+PUA/hacktool by machine-learning engines.
 
-The current build is 1/71 on VirusTotal: **Microsoft is clean** and so is every other engine
-except SecureAge, which reports `Malicious` (a generic static-ML verdict on an unsigned
-binary). Earlier builds were flagged by Microsoft as `Program:Win32/Wacapew.Cml` and
+The current build is Authenticode-signed (`CN=HYPERSENSEGLOBALT`, SHA-256, timestamped). The
+unsigned build of exactly this code scores **1/71 on VirusTotal** — Microsoft clean, every
+other engine clean except SecureAge, which reports `Malicious` (a generic static-ML verdict). Signing changes the hash, so treat that scan as the baseline
+for the code, not for the signed file: re-scan `108160ae…` before quoting a number. Earlier
+builds were flagged by Microsoft as `Program:Win32/Wacapew.Cml` and
 `Trojan:Win32/Wacatac.C!ml`; the name moves between builds because it is a cloud ML score on
 the whole file, not a property of the source, so a rebuild is not a fix. The import table is
 kept deliberately boring for that reason — no clipboard, key-state or crypto-provider calls,
@@ -156,6 +158,15 @@ antivirus — read **[docs/FALSE_POSITIVES.md](docs/FALSE_POSITIVES.md)**, which
 submission text and the signing procedure. Ready-to-paste vendor forms live in
 **[docs/MICROSOFT_FP.txt](docs/MICROSOFT_FP.txt)** and
 **[docs/SECUREAGE_FP.txt](docs/SECUREAGE_FP.txt)**.
+
+The signing certificate is **self-signed**, so on a machine that has not installed its root
+Windows still shows *Unknown publisher*; a CA-issued OV/EV certificate is what removes that
+warning and carries real SmartScreen reputation.
+
+```
+SHA-256  108160ae2315ebe110cac9bca6156e1ddeb81677f857e21cff6f7067d7eb9d7c
+Size     1,853,096 bytes          Signed   CN=HYPERSENSEGLOBALT (self-signed)
+```
 
 ## Intended use
 
