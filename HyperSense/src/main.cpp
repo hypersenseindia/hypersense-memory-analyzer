@@ -4665,6 +4665,14 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
             SetTimer(h, 1, 500, nullptr);
             RpcStartWorker();
             RpcPublishIdle();
+#ifdef HS_CLASSIC_DEFAULT
+            // Classic flavour: open straight into the moneta64.exe-style one-row layout.
+            // The toggle stays live, so the user can still switch to the full GUI.
+            TgSetOn(g_hTgClassic, true);
+            ApplyClassicMode();
+            if (g_tab) BuildInfoView();
+            SetStatus(L"READY - CLASSIC");
+#endif
             return 0;
         }
         case WM_SIZE: {

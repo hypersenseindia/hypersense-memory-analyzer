@@ -1,11 +1,23 @@
 #include <windows.h>
 
+// The classic flavour is the same program with the moneta64-style one-row layout as
+// its start screen. Only the name strings differ; the code is shared.
+#ifdef HS_CLASSIC_BUILD
+#define HS_INTERNAL "HyperSense64Classic"
+#define HS_ORIGINAL "HyperSense64Classic.exe"
+#define HS_DESCRIPTION "HyperSense - Live Usermode Memory Analysis Tool (x64, Classic UI)"
+#else
+#define HS_INTERNAL "HyperSense64"
+#define HS_ORIGINAL "HyperSense64.exe"
+#define HS_DESCRIPTION "HyperSense - Live Usermode Memory Analysis Tool (x64)"
+#endif
+
 1 ICON "icon.ico"
 1 24 "app.manifest"
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 1,0,1,1
- PRODUCTVERSION 1,0,1,1
+ FILEVERSION 1,0,2,0
+ PRODUCTVERSION 1,0,2,0
  FILEFLAGSMASK 0x3fL
  FILEFLAGS 0x0L
  FILEOS 0x40004L
@@ -17,14 +29,14 @@ BEGIN
         BLOCK "040904b0"
         BEGIN
             VALUE "CompanyName", "HYPERSENSEGLOBAL"
-            VALUE "FileDescription", "HyperSense - Live Usermode Memory Analysis Tool (x64)"
-            VALUE "FileVersion", "1.0.1.1"
-            VALUE "InternalName", "HyperSense64"
+            VALUE "FileDescription", HS_DESCRIPTION
+            VALUE "FileVersion", "1.0.2"
+            VALUE "InternalName", HS_INTERNAL
             VALUE "LegalCopyright", "Copyright (C) 2026 HYPERSENSEGLOBAL. Moneta engine (C) Forrest Orr & Gabriel Landau, GPLv3."
             VALUE "LegalTrademarks", "HYPERSENSEGLOBAL(TM)"
-            VALUE "OriginalFilename", "HyperSense64.exe"
+            VALUE "OriginalFilename", HS_ORIGINAL
             VALUE "ProductName", "HYPERSENSEGLOBAL HyperSense"
-            VALUE "ProductVersion", "1.0.1.1"
+            VALUE "ProductVersion", "1.0.2"
             VALUE "Comments", "Live usermode memory analysis front-end for the open-source Moneta engine (GPLv3). Reads only the process the user selects and writes only the report the user saves. https://github.com/hypersenseindia/hypersense-memory-analyzer"
         END
     END
