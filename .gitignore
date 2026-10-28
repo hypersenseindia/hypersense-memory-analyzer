@@ -55,3 +55,6 @@ Tests/**/obj/
 # ---- Release binaries (committed on purpose, see docs/WHATS_NEW.md) ----
 !HyperSense/releases/*/*.exe
 !HyperSense/releases/*/SHA256SUMS.txt
+
+# ---- Original v1.0.1 signed build, kept as shipped (see CHANGELOG 1.0.1) ----
+!SIGNED! BY HXG/*.exe
