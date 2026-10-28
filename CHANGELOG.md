@@ -28,7 +28,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
 ### Changed
 - `build.bat` takes an optional `classic` argument and compiles the flavour-specific resource
   (`res\resource_classic.o`); the default GUI build is unchanged for callers.
-- `report_fp.ps1` defaults to `HXG SIGNED\HyperSense64-HXG-SIGNED.exe`, the file that ships.
+- `report_fp.ps1` defaults to `releases\1.0.2\HyperSense64-HXG-SIGNED.exe`, the file that ships.
 
 ## [1.0.1.1] — 2026-10-28
 

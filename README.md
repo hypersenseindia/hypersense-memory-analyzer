@@ -31,7 +31,7 @@ crash inside the scanner can never take the window down with it.
 **Download (v1.0.2)** — four files, GUI and CLASSIC, each signed and unsigned, with their
 SHA-256 in [`SHA256SUMS.txt`](https://github.com/hypersenseindia/hypersense-memory-analyzer/blob/main/HyperSense/HXG%20SIGNED/SHA256SUMS.txt):
 
-* [`HyperSense/HXG SIGNED/`](https://github.com/hypersenseindia/hypersense-memory-analyzer/tree/main/HyperSense/HXG%20SIGNED) — in the repository, click a file and use *Download*
+* [`HyperSense/releases/1.0.2/`](https://github.com/hypersenseindia/hypersense-memory-analyzer/tree/main/HyperSense/releases/1.0.2) — in the repository, click a file and use *Download*
 * [Releases](https://github.com/hypersenseindia/hypersense-memory-analyzer/releases) — the same files as release assets
 
 <p align="center">
@@ -170,7 +170,7 @@ The signing certificate is **self-signed**, so on a machine that has not install
 Windows still shows *Unknown publisher*; a CA-issued OV/EV certificate is what removes that
 warning and carries real SmartScreen reputation.
 
-The four release files (`HyperSense/HXG SIGNED/`):
+The four release files (`HyperSense/releases/1.0.2/`):
 
 | File | Size | Signature | SHA-256 |
 | --- | --- | --- | --- |

@@ -19,7 +19,7 @@ $ErrorActionPreference = "Stop"
 if (-not $Exe) {
     # Prefer the signed release binary: that is what actually ships, and the hash
     # of the pre-signing file is worthless to the vendor.
-    $signed = Join-Path (Split-Path -Parent $PSScriptRoot) "HXG SIGNED\HyperSense64-HXG-SIGNED.exe"
+    $signed = Join-Path (Split-Path -Parent $PSScriptRoot) "releases\1.0.2\HyperSense64-HXG-SIGNED.exe"
     $plain  = Join-Path (Split-Path -Parent $PSScriptRoot) "HyperSense64.exe"
     if (Test-Path $signed) { $Exe = $signed } else { $Exe = $plain }
 }

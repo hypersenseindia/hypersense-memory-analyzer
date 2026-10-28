@@ -47,7 +47,7 @@ Get-FileHash .\HyperSense64.exe -Algorithm SHA256
 Get-AuthenticodeSignature .\HyperSense64.exe | Format-List Status,@{n='SignedBy';e={$_.SignerCertificate.Subject}}
 ```
 
-The four release files (`HyperSense/HXG SIGNED/`, version `1.0.2`):
+The four release files (`HyperSense/releases/1.0.2/`, version `1.0.2`):
 
 | File | Size | Signature | SHA-256 |
 | --- | --- | --- | --- |
