@@ -20,6 +20,7 @@ public class U2 {
     [DllImport("user32.dll", CharSet=CharSet.Unicode, EntryPoint="SendMessageW")] public static extern IntPtr SendMessageStr(IntPtr h, uint msg, IntPtr wp, StringBuilder lp);
     [DllImport("user32.dll", CharSet=CharSet.Unicode, EntryPoint="SendMessageW")] public static extern IntPtr SendMessageText(IntPtr h, uint msg, IntPtr wp, string lp);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
     [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
 
     public static List<IntPtr> Children(IntPtr parent) {
@@ -46,8 +47,10 @@ $kids = [U2]::Children($main)
 $combo = $kids | Where-Object { [U2]::Cls($_) -eq "ComboBox" } | Select-Object -First 1
 if (-not $combo) { throw "combo not found" }
 
-# The search box is the top-most plain EDIT child (above the combo in the target card).
-$edits = $kids | Where-Object { [U2]::Cls($_) -eq "Edit" } | Sort-Object { [U2]::Top($_) }
+# The search box is the top-most VISIBLE plain EDIT child (the classic-mode PID
+# override is hidden in normal mode and must never be picked).
+$edits = $kids | Where-Object { [U2]::Cls($_) -eq "Edit" -and [U2]::IsWindowVisible($_) } |
+         Sort-Object { [U2]::Top($_) }
 if (-not $edits) { throw "search edit not found" }
 $search = $edits | Select-Object -First 1
 

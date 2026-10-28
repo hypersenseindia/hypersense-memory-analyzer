@@ -6,6 +6,7 @@ public class W {
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int c);
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
 }
 "@
@@ -19,6 +20,8 @@ $h = $p.MainWindowHandle
 Start-Sleep -Milliseconds 700
 $r = New-Object W+RECT
 [W]::GetWindowRect($h, [ref]$r) | Out-Null
+[W]::SetCursorPos(4, ($r.Top + ($r.Bottom - $r.Top) - 6)) | Out-Null
+Start-Sleep -Milliseconds 250
 $w = $r.Right - $r.Left
 $hgt = $r.Bottom - $r.Top
 $bmp = New-Object System.Drawing.Bitmap($w, $hgt)

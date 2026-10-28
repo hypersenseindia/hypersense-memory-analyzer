@@ -1,0 +1,87 @@
+﻿Microsoft Defender "Program:Win32/Wacapew.Cml" false positive - submission notes
+================================================================================
+
+Vendor : Microsoft (Microsoft Defender Antivirus, machine-learning verdict)
+Verdict: Program:Win32/Wacapew.Cml   (PUA / "program" class, not a trojan)
+Status : Microsoft is CLEAN on the current build (1/71 on VirusTotal, 2026-10-28).
+         Keep this packet for the next build that gets flagged; do not submit a clean file.
+Earlier: Trojan:Win32/Wacatac.C!ml and Trojan:Win32/Wacatac.Biml were returned for
+         previous builds (b2cc6873..., a91e4462...); d6036fb5... (same version, previous
+         metadata wording) got Program:Win32/Wacapew.Cml. The name changes from build
+         to build; it is the same cloud ML model scoring the same kind of tool.
+Other  : SecureAge - "Malicious" (the only other engine; see SECUREAGE_FP.txt)
+File   : HyperSense64.exe  v1.0.1.1  x64  peexe  1,845,760 bytes (1.76 MB)
+SHA-256: a35eaa0e8ca83c3f2372b17ae6d92c65d59bd1384af28028b406d488f26ffeed
+         Report the build you actually ship - the hash in this file must match it.
+
+Where to submit
+---------------
+https://www.microsoft.com/en-us/wdsi/filesubmission
+
+  1. "Submit file as a" -> Software developer -> Continue
+     (a Microsoft account lets you track the case; "Skip" also works)
+  2. Product .................. Microsoft Defender Antivirus (Windows 11)
+  3. Company Name ............. HYPERSENSEGLOBAL
+  4. Found in MS network ...... No
+  5. Number of affected devices  1 - 100 (or the real number)
+  6. Priority ................. Medium
+  7. Select the file .......... the HyperSense64.exe that hashes to a35eaa0e...
+                                 (1.76 MB, under the 50 MB limit - no archive needed)
+  8. "What do you believe this file is?"
+        Incorrectly detected as malware/malicious
+  9. Detection name ........... Program:Win32/Wacapew.Cml
+ 10. Definition version ....... the one shown by Defender on the machine that flagged it
+ 11. Additional information ... paste the block below (it fits the 1,900-char limit)
+
+Text for "Additional information"
+----------------------------------
+Helper: `powershell -File HyperSense\tools\report_fp.ps1 -Open` recomputes the
+hash, copies this text to the clipboard and opens the portal.
+
+HyperSense64.exe is a usermode memory-analysis GUI that embeds the open-source
+Moneta scanner (GPLv3, https://github.com/forrest-orr/moneta). The detection
+Program:Win32/Wacapew.Cml is a machine-learning false positive: the tool is
+classified as a PUA because it reads the memory of a process the user picks.
+
+What it does, only after the user presses RUN: opens a user-selected process
+with OpenProcess(PROCESS_VM_READ), calls VirtualQueryEx, reads PEB/TEB and
+module images, and reports suspicious memory regions (private executable pages,
+modified code, unsigned modules). SeDebugPrivilege is enabled only inside the
+hidden child process immediately before a scan.
+
+What it does not do: no persistence, no services, no drivers, no autorun, no
+network traffic, no credential access, no code injection (no WriteProcessMemory,
+no CreateRemoteThread, no hooks). The import table has no clipboard calls, no
+key-state polling, no crypto-provider calls and no temp-directory writes;
+SHA-256 is implemented inside the program, and clipboard copies use WM_COPY from
+the program's own read-only edit control. No byte of another process is changed:
+only VirtualQueryEx and ReadProcessMemory are used.
+
+Build: x64, statically linked MinGW/UCRT, not packed, no UPX, no obfuscated or
+encrypted strings, complete version resource (HYPERSENSEGLOBAL), asInvoker
+manifest. File: 1,845,760 bytes x64.
+SHA-256: a35eaa0e8ca83c3f2372b17ae6d92c65d59bd1384af28028b406d488f26ffeed
+VirusTotal: engine counts change per build - check the report for the SHA-256 above.
+
+Please reclassify this file and remove the Program:Win32/Wacapew.Cml detection.
+
+Notes
+-----
+* Submit the exact hash above. Any rebuild changes it and you start over, so
+  report the build you actually ship.
+* Do not chase the verdict name with rebuilds. Microsoft's cloud ML re-scores
+  the same bytes over time: this project's 745206FD... build went from
+  2/70 (Wacapew) to 1/70 (clean) with no code change and no submission, and
+  later builds came back as Wacatac.C!ml and then Wacapew.Cml again. A rebuild
+  changes the hash, not the behaviour, so the result is a coin toss.
+* This tool class is flagged by design: Process Hacker, System Informer, Cheat
+  Engine and x64dbg are all routinely detected as PUA/hacktool until the vendor
+  whitelists them. The submission above is the mechanism that does that.
+* Microsoft normally answers a developer submission in 24-72 h and pushes an
+  updated signature. Re-scan on VirusTotal after the definition update; the
+  VirusTotal copy of the Microsoft engine lags the local one by some hours.
+* If SmartScreen also blocks the download, the same submission covers it; a
+  code-signing certificate (docs/FALSE_POSITIVES.md section 1) is the durable
+  fix for reputation and lowers the ML weight of an unsigned binary.
+* Do not "fix" this with packers, crypters or string obfuscation: that raises
+  the ML score and turns a false positive into a real hacktool classification.

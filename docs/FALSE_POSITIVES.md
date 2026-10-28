@@ -9,15 +9,22 @@ Typical report for this tool:
 
 | Vendor | Verdict | What it actually is |
 | --- | --- | --- |
-| Microsoft | `Program:Win32/Wacapew.Cml` | PUA/ML "program" verdict, **not** a trojan |
-| SecureAge | `Malicious` | generic static-ML verdict |
+| Microsoft | **clean** on the current build | earlier builds were scored `Program:Win32/Wacapew.Cml` (PUA) and `Trojan:Win32/Wacatac.C!ml` / `Wacatac.Biml` for the same code |
+| SecureAge | `Malicious` | generic static-ML verdict on an unsigned binary |
 
-Everything else (Defender's real-time engine included) normally comes back clean, and the
+Everything else comes back clean (the current build is 1/71 on VirusTotal), and the
 Moneta engine it embeds is public GPLv3 source: <https://github.com/forrest-orr/moneta>.
 
-> A 2/70 result is **not** evidence of malware, but it is worth fixing properly. Do **not**
+> A 1/71 result is **not** evidence of malware, but it is worth fixing properly. Do **not**
 > try to "evade" it with packers, crypters, string obfuscation or anti-VM tricks - those
 > raise the ML score and get the binary classified as a hacktool for real.
+
+> The verdict name is not a property of the code. Microsoft's cloud model re-scores the same
+> bytes over time and gives different answers for different builds: this project's
+> `745206FD...` build went from `2/70` (`Wacapew`) to `1/70` (clean) with no rebuild and no
+> submission, and later builds came back as `Wacatac.C!ml` and then `Wacapew.Cml` again.
+> Rebuilding changes the hash, not the behaviour - treat a rebuild as a lottery ticket, not a
+> fix. The fix is section 2 (report) and section 1 (sign).
 
 ---
 
@@ -47,13 +54,20 @@ Submit the **exact file/hash you ship**, once, after the final build:
 
 ```powershell
 Get-FileHash .\HyperSense64.exe -Algorithm SHA256
+
+# or let the helper print it, copy the paste text and open the portal:
+.\HyperSense\tools\report_fp.ps1 -Open
 ```
 
 * **Microsoft** - <https://www.microsoft.com/en-us/wdsi/filesubmission>
-  Choose *Software developer* -> *Incorrectly detected as malware/PUA*, upload the exe and use
-  the text below. Microsoft normally reclassifies within 24-72 h and pushes updated signatures.
+  Choose *Software developer* -> *Incorrectly detected as malware/malicious*, product
+  *Microsoft Defender Antivirus (Windows 11/10)*, company `HYPERSENSEGLOBAL`, detection name
+  `Program:Win32/Wacapew.Cml`, upload the exe and paste the text below (it fits the 1,900-char
+  limit). The exact field-by-field walkthrough, with the current hash, is in
+  **[MICROSOFT_FP.txt](MICROSOFT_FP.txt)**. Microsoft normally reclassifies within 24-72 h
+  and pushes updated signatures.
 * **SecureAge** - false-positive / support form on <https://www.secureage.com/> (include the
-  same text and the SHA-256).
+  same text and the SHA-256); see **[SECUREAGE_FP.txt](SECUREAGE_FP.txt)**.
 * Any other vendor that flags it: same message, same hash.
 
 Submission text:
@@ -71,7 +85,7 @@ It is not malware: no persistence, no services, no drivers, no network traffic, 
 credential access, no code injection into other processes, no files written outside the
 report the user explicitly saves. The GUI runs asInvoker; elevation is opt-in.
 
-Detection name: Program:Win32/Wacapew.Cml (PUA/ML) / SecureAge "Malicious".
+Detection name: Program:Win32/Wacapew.Cml (ML, PUA) / SecureAge "Malicious".
 Please reclassify this file.
 
 SHA-256: <paste hash>
@@ -89,9 +103,28 @@ Already done in this build, and worth preserving:
 * the only network-adjacent action is none - the tool never connects anywhere;
 * SeDebugPrivilege is enabled only inside the hidden scan child, right before a scan.
 
+The import table is the part machine learning reads first, and it is deliberately dull:
+
+* **no clipboard APIs** - `Copy selection / Copy line / Copy all output` use `WM_COPY` on the
+  program's own read-only edit control, so `OpenClipboard`/`SetClipboardData` are absent;
+* **no key-state polling** - Ctrl+click reads `MK_CONTROL` from the mouse message instead of
+  calling `GetKeyState`/`GetAsyncKeyState`, which is the keylogger-shaped part of the profile;
+* **no crypto provider** - SHA-256 (used only to build a VirusTotal URL) lives in
+  `src/sha256.h`; `CryptAcquireContext`/`CryptHashData` are not imported;
+* **no temp-directory writes** - the opt-in RPC trace is written next to the executable.
+
+A build that imports `ReadProcessMemory` *and* the clipboard *and* key-state polling *and* a
+hash provider looks like a Discord/credential stealer to a cloud ML model, which is what the
+`Wacatac` names label. Removing the last three costs nothing functionally.
+
+That said, it is not sufficient on its own: the same build with those imports removed still
+comes back as `Wacapew`/`Wacatac` from Microsoft. The residual score comes from the tool's
+purpose - a user-mode memory reader is PUA-shaped by definition - so the vendor-side steps in
+sections 1 and 2 are what actually clear it.
+
 If you add features later, avoid: process injection, `CreateRemoteThread`, keyboard hooks,
-Defender tampering, hidden windows, and downloading payloads - each one moves the score in
-the wrong direction.
+clipboard readers, `GetAsyncKeyState`, `GetTempPath`, Defender tampering, hidden windows, and
+downloading payloads - each one moves the score in the wrong direction.
 
 ## 4. Users who still get flagged
 

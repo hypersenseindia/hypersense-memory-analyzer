@@ -34,16 +34,24 @@ crash inside the scanner can never take the window down with it.
 
 ## Features
 
+> **New in this build:** see **[docs/WHATS_NEW.md](docs/WHATS_NEW.md)** for the old vs new
+> comparison against the last public build.
+
 | | |
 | --- | --- |
 | **One file** | `HyperSense64.exe`, ~1.7 MB, statically linked. Copy it anywhere and run it. |
 | **Target search** | Filter the process list live by name, full image path or PID. Shows the match count and falls back to the first hit. |
 | **Four memory modes** | `IOC` (suspicious regions only), `ALL`, `REGION` (one address range / region size) and `REFERENCED` (regions that reference a given address). |
 | **IOC filters** | Apply all, unsigned modules, metadata modules, CLR heap, CLR JIT (`prvx`), WOW64 initialisation. |
-| **Live output** | The scanner streams to the window as it works; 30 000 lines are rendered, the full log is always kept for the report. |
+| **Live output** | The scanner streams to the window as it works; 30 000 lines are rendered, the full log is always kept for the report. `OUTPUT` / `COMMAND` / `DETAILS` tabs show the run itself, the exact engine command line and the resolved settings. |
+| **Right-click actions** | Right-click any path in the output to open it, show it in Explorer, copy it, or **search its SHA-256 on VirusTotal** in your default browser. `Ctrl+click` opens a path directly. |
+| **Classic mode** | A `moneta64.exe`-style one-row layout: pick a process, run, read the output. A `PRESET` list fills in standard `moneta64.exe` command lines (`-m ioc -p <pid>`, `-v detail`, `--filter *`, `-d`, …) with the selected PID, and the `COMMAND` box stays editable — press Enter to run what you typed. |
+| **Unsigned focus** | `FOCUS UNSIGNED` highlights unsigned modules and dims signed/routine lines so real IOCs stand out. |
+| **Discord Rich Presence** | Automatic, no toggle: your Discord profile shows the process being scanned, the mode, the suspicious count and a live elapsed timer while the scan runs, with **GitHub** and **Join our Discord** buttons. Status travels over Discord's local IPC pipe only. |
+| **Tooltips everywhere** | Every control explains itself on hover, including the shortcuts. |
 | **Reports** | `SAVE TXT` and `SAVE HTML` write host name, account, SID, OS build, elevation, timestamps, options, result and the complete engine output. |
 | **Isolation** | The scanner runs out of process (`--engine`, no console window). `STOP` terminates it immediately; the UI stays responsive. |
-| **No surprises** | `asInvoker` manifest, opt-in elevation button, no drivers, no services, no autorun, no network access, no telemetry. |
+| **No surprises** | `asInvoker` manifest, opt-in elevation button, no drivers, no services, no autorun, no telemetry. The only outbound actions are the ones you start yourself: **Search on VirusTotal** opens a report in your browser, and Discord Rich Presence talks to the local Discord client only. |
 
 ## Quick start
 
@@ -52,6 +60,8 @@ crash inside the scanner can never take the window down with it.
 3. Pick a target — type in **TARGET PROCESS** to filter, or choose **ALL PROCESSES** for a system-wide run.
 4. Press **RUN ANALYSIS** and watch **LIVE ANALYSIS OUTPUT**. **STOP** ends the scan at any time.
 5. **SAVE TXT** or **SAVE HTML** exports the result.
+6. Right-click any file path in the output for **Open**, **Show in folder**, **Copy** or
+   **Search on VirusTotal** (SHA-256, opened in your browser). `Ctrl+click` opens it too.
 
 A typical run against `explorer.exe`:
 
@@ -61,6 +71,48 @@ A typical run against `explorer.exe`:
 ```
 
 > The engine exits with code **1 on a successful scan** — that is Moneta's convention, not a failure.
+
+Only one window runs at a time — launching the tool again simply brings the open window to the
+front.
+
+## Classic mode (moneta64.exe style)
+
+Switch on **CLASSIC MODE** in the header for the plain one-row layout: type in the search box,
+pick the process from the list and press **RUN ANALYSIS**. The `PRESET` dropdown fills the
+`COMMAND` box with a literal command line, for example:
+
+```
+moneta64.exe -m ioc -p 11044
+moneta64.exe -m ioc -p 11044 -v detail
+moneta64.exe -m ioc -p 11044 --filter *
+moneta64.exe -m ioc -p 11044 -d
+moneta64.exe -m ioc -p 11044 -v detail --option statistics --filter *
+```
+
+`<pid>` is always replaced by the process selected in the list (or by the optional PID
+override). The `COMMAND` box is editable: change any argument and press **Enter** to run it,
+or **Esc** to restore the line generated from the current settings. The GUI translates it
+back into its own settings, so `COMMAND`, `DETAILS` and the saved report stay in sync.
+
+## Discord Rich Presence
+
+Rich Presence runs automatically — there is no toggle and nothing to configure. While the
+tool is open, your Discord profile shows the current activity: the process being scanned,
+`IOC · DETAIL · 3 suspicious`, and a live elapsed timer that becomes the final result
+(`Scan clean` / `12 suspicious regions`). The card has **GitHub** and **Join our Discord**
+buttons ([discord.gg/me7DvyzUp3](https://discord.gg/me7DvyzUp3)). Closing the tool clears
+the status.
+
+It only talks to the Discord desktop client over its local IPC pipe — the app itself sends
+nothing to a server. The Client ID can be overridden in `HyperSense.ini` if you fork the
+build for your own Discord application:
+
+```ini
+[discord]
+client_id=1564751949201543358
+```
+
+The `HYPERSENSE_DISCORD_CLIENT_ID` environment variable works too.
 
 ## Build from source
 
@@ -93,10 +145,17 @@ A memory scanner opens other processes with `PROCESS_VM_READ`, walks `PEB`/`TEB`
 enables `SeDebugPrivilege` before a scan. Unsigned binaries doing that are regularly
 scored as PUA/hacktool by machine-learning engines.
 
-The current release build is clean on Microsoft Defender and on the overwhelming
-majority of VirusTotal engines. If a vendor flags your copy, do **not** disable your
+The current build is 1/71 on VirusTotal: **Microsoft is clean** and so is every other engine
+except SecureAge, which reports `Malicious` (a generic static-ML verdict on an unsigned
+binary). Earlier builds were flagged by Microsoft as `Program:Win32/Wacapew.Cml` and
+`Trojan:Win32/Wacatac.C!ml`; the name moves between builds because it is a cloud ML score on
+the whole file, not a property of the source, so a rebuild is not a fix. The import table is
+kept deliberately boring for that reason — no clipboard, key-state or crypto-provider calls,
+and SHA-256 lives in `src/sha256.h`. If a scanner flags your copy, do **not** disable your
 antivirus — read **[docs/FALSE_POSITIVES.md](docs/FALSE_POSITIVES.md)**, which includes the
-submission text and the signing procedure.
+submission text and the signing procedure. Ready-to-paste vendor forms live in
+**[docs/MICROSOFT_FP.txt](docs/MICROSOFT_FP.txt)** and
+**[docs/SECUREAGE_FP.txt](docs/SECUREAGE_FP.txt)**.
 
 ## Intended use
 
@@ -104,8 +163,11 @@ HYPERSENSEGLOBAL is a diagnostic tool for **systems you own or are authorised to
 — malware triage, incident response, reverse engineering, detection engineering.
 
 It does not inject code, does not modify the target, does not persist anything and does
-not communicate with any network endpoint. It reads memory and writes the report you ask
-for.
+not contact any network endpoint by itself. It reads memory and writes the report you ask
+for. The optional **Search on VirusTotal** action only computes a local SHA-256 and hands
+the URL to your browser — nothing is uploaded by this program. **Discord Rich Presence**
+passes the scan status to the Discord client running on your machine; what Discord does with
+that is governed by your Discord privacy settings, and closing the tool clears the status.
 
 ## Contributors
 
