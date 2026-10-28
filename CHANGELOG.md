@@ -38,7 +38,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
   self-signed, so it attributes the file to HYPERSENSEGLOBAL instead of leaving it anonymous,
   but Windows still shows *Unknown publisher* on machines without its root — a CA-issued
   OV/EV certificate is the upgrade, not a code change.
-- Signed artifact (`HyperSense/HXG SIGNED/HyperSense64 HXG SIGNED LATEST.exe`):
+- Signed artifact (`HyperSense/HXG SIGNED/HyperSense64 Classic LATEST 1.0.2.exe` — the file was
+  renamed after this build; its version resource still reads `1.0.1.1`):
   `108160ae2315ebe110cac9bca6156e1ddeb81677f857e21cff6f7067d7eb9d7c`, 1,853,096 bytes.
   It differs from the unsigned build (`a35eaa0e…`) in 6 bytes of PE checksum plus the
   certificate table — same program.
