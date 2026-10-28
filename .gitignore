@@ -58,3 +58,6 @@ Tests/**/obj/
 
 # ---- Original v1.0.1 signed build, kept as shipped (see CHANGELOG 1.0.1) ----
 !SIGNED! BY HXG/*.exe
+
+# ---- HXG signed builds kept in their own folder ----
+!HyperSense/HXG SIGNED/*.exe
