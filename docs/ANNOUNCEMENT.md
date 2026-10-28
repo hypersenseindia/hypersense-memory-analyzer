@@ -36,24 +36,22 @@ the full GUI and a **CLASSIC** build that opens straight into the `moneta64.exe`
 
 🖥️ Windows 10 / 11 · x64
 
-⬇️ **DOWNLOAD** — pick one of four
+⬇️ **DOWNLOAD** — three files
 https://github.com/hypersenseindia/hypersense-memory-analyzer/releases/tag/v1.0.2
 
-**GUI edition**
-• `HyperSense64.exe` — signed *(recommended)*
-• `HyperSense64-unsigned.exe` — no signature
-
-**CLASSIC edition** *(starts in the one-row layout)*
-• `HyperSense64Classic.exe` — signed *(recommended)*
-• `HyperSense64Classic-unsigned.exe` — no signature
+• `HyperSense64.BY.HXG.1.0.1.exe` — signed, built 1.0.1.0
+• `HyperSense64.Classic.LATEST.1.0.2.exe` — signed, built 1.0.1.1
+• `HyperSense64Classic-unsigned.exe` — no signature, built 1.0.2
 
 🔐 **VERIFY**
 ```
-HyperSense64.exe                   bcd48830528cb21166c4370c7a7e90b93e74ee12b0ede23d96e10fa15deb4df0
-HyperSense64-unsigned.exe          568a1b428ddf4e46529d503a2dcd4b25fbaac708ed8312e0da426201d31b5f7a
-HyperSense64Classic.exe            eb3764631f6d314f88271af0c039989307cc5da2ed9dc65e1a3cc7938f278a4a
-HyperSense64Classic-unsigned.exe   53d1e04483a9ec76baf2012e9d01c15904efe09be86458b6bc56d8f4b9a69542
+HyperSense64.BY.HXG.1.0.1.exe          c8dfaf8aa311dd46276e2349420e5788290fb2e942d2ba070007c4ca727274a6
+HyperSense64.Classic.LATEST.1.0.2.exe  108160ae2315ebe110cac9bca6156e1ddeb81677f857e21cff6f7067d7eb9d7c
+HyperSense64Classic-unsigned.exe       53d1e04483a9ec76baf2012e9d01c15904efe09be86458b6bc56d8f4b9a69542
 ```
+
+Read the Details tab, not the file name: only `HyperSense64Classic-unsigned.exe` reports `1.0.2`,
+the other two are older signed builds.
 
 🛡️ **VirusTotal:** the last scanned build came back **1/71 — Microsoft clean**, SecureAge the
 only flag. 1.0.2 changes the hashes, so scan the file you download. The certificate is

@@ -16,14 +16,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
   `CLASSIC MODE` toggle still switches it to the full GUI, and the GUI build still switches the
   other way. Version resource, manifest and file names are flavour-specific
   (`HyperSense64Classic.exe` / "... (x64, Classic UI)").
-- **Four release files**, each flavour signed and unsigned (version `1.0.2`):
+- **Release assets**, as published on `v1.0.2`:
 
-  | File | Size | Signature | SHA-256 |
-  | --- | --- | --- | --- |
-  | `HyperSense64-unsigned.exe` | 1,845,760 | none | `568a1b428ddf4e46529d503a2dcd4b25fbaac708ed8312e0da426201d31b5f7a` |
-  | `HyperSense64.exe` | 1,852,920 | `CN=HYPERSENSEGLOBALT` | `bcd48830528cb21166c4370c7a7e90b93e74ee12b0ede23d96e10fa15deb4df0` |
-  | `HyperSense64Classic-unsigned.exe` | 1,845,760 | none | `53d1e04483a9ec76baf2012e9d01c15904efe09be86458b6bc56d8f4b9a69542` |
-  | `HyperSense64Classic.exe` | 1,852,920 | `CN=HYPERSENSEGLOBALT` | `eb3764631f6d314f88271af0c039989307cc5da2ed9dc65e1a3cc7938f278a4a` |
+  | Asset | Size | Version | Signature | SHA-256 |
+  | --- | --- | --- | --- | --- |
+  | `HyperSense64.BY.HXG.1.0.1.exe` | 1,756,840 | 1.0.1.0 | `CN=HYPERSENSEGLOBALT` | `c8dfaf8aa311dd46276e2349420e5788290fb2e942d2ba070007c4ca727274a6` |
+  | `HyperSense64.Classic.LATEST.1.0.2.exe` | 1,853,096 | 1.0.1.1 | `CN=HYPERSENSEGLOBALT` | `108160ae2315ebe110cac9bca6156e1ddeb81677f857e21cff6f7067d7eb9d7c` |
+  | `HyperSense64Classic-unsigned.exe` | 1,845,760 | 1.0.2 | none | `53d1e04483a9ec76baf2012e9d01c15904efe09be86458b6bc56d8f4b9a69542` |
+
+  The `1.0.2` build products (GUI and CLASSIC, signed and unsigned) are kept in
+  `HyperSense/releases/1.0.2/` with their own `SHA256SUMS.txt`.
 
 ### Changed
 - `build.bat` takes an optional `classic` argument and compiles the flavour-specific resource
