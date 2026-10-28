@@ -3,9 +3,11 @@ SecureAge "Malicious" false positive - submission notes
 
 Vendor : SecureAge Technology (VirusTotal engine label: "Acronis (Static ML)")
 Verdict: Malicious  (the only engine flagging the build that was scanned)
-File   : HyperSense64.exe  v1.0.1.1  x64  peexe  1,853,096 bytes (1.77 MB)
-SHA-256: 108160ae2315ebe110cac9bca6156e1ddeb81677f857e21cff6f7067d7eb9d7c
+File   : HyperSense64.exe  v1.0.2  x64  peexe  1,852,920 bytes (1.77 MB)
+SHA-256: bcd48830528cb21166c4370c7a7e90b93e74ee12b0ede23d96e10fa15deb4df0
 Signed : Authenticode, CN=HYPERSENSEGLOBALT, SHA-256, DigiCert RFC 3161 timestamp
+         CLASSIC edition (one-row start layout), signed:
+         eb3764631f6d314f88271af0c039989307cc5da2ed9dc65e1a3cc7938f278a4a
 
 Where to submit
 ---------------
@@ -14,7 +16,7 @@ https://www.secureage.com/contact-us
   -> "Report false positive"
   (form takes a Supporting File up to 4 MB - the exe is 1.77 MB, so upload the exe itself)
 
-Supporting File: the HyperSense64.exe that hashes to 108160ae... (do not rebuild first)
+Supporting File: the HyperSense64.exe that hashes to bcd48830... (do not rebuild first)
 
 Text for "Describe Your Issue"
 ------------------------------
@@ -32,11 +34,11 @@ credential access, no process injection, no code written outside the report the
 user explicitly saves. The GUI starts asInvoker; elevation is opt-in via a
 button. It is statically linked, not packed, and contains no obfuscated strings.
 
-File: HyperSense64.exe v1.0.1.1 (x64, 1,853,096 bytes, 1.77 MB)
-SHA-256: 108160ae2315ebe110cac9bca6156e1ddeb81677f857e21cff6f7067d7eb9d7c
+File: HyperSense64.exe v1.0.2 (x64, 1,852,920 bytes, 1.77 MB)
+SHA-256: bcd48830528cb21166c4370c7a7e90b93e74ee12b0ede23d96e10fa15deb4df0
 Signed: Authenticode (CN=HYPERSENSEGLOBALT), SHA-256, RFC 3161 timestamped.
-VirusTotal: 1/71 on the unsigned build of the same code - this engine is the only one
-that flags it. Re-scan after signing; the hash changed.
+VirusTotal: 1/71 on the last scanned build - this engine is the only one that flags it.
+1.0.2 changed every hash, so scan the file you submit.
 Engine source: https://github.com/forrest-orr/moneta
 
 Please reclassify this file and remove the "Malicious" detection.

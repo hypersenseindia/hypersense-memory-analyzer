@@ -8,6 +8,28 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
 
 ## [Unreleased]
 
+## [1.0.2] — 2026-10-28
+
+### Added
+- **CLASSIC edition.** `build.bat classic` produces `HyperSense64Classic.exe`, the same program
+  built to open directly in the `moneta64.exe`-style one-row layout (`READY - CLASSIC`); the
+  `CLASSIC MODE` toggle still switches it to the full GUI, and the GUI build still switches the
+  other way. Version resource, manifest and file names are flavour-specific
+  (`HyperSense64Classic.exe` / "... (x64, Classic UI)").
+- **Four release files**, each flavour signed and unsigned (version `1.0.2`):
+
+  | File | Size | Signature | SHA-256 |
+  | --- | --- | --- | --- |
+  | `HyperSense64 -unsigned.exe` | 1,845,760 | none | `568a1b428ddf4e46529d503a2dcd4b25fbaac708ed8312e0da426201d31b5f7a` |
+  | `HyperSense64 HXG SIGNED.exe` | 1,852,920 | `CN=HYPERSENSEGLOBALT` | `bcd48830528cb21166c4370c7a7e90b93e74ee12b0ede23d96e10fa15deb4df0` |
+  | `HyperSense64 CLASSIC -unsigned.exe` | 1,845,760 | none | `53d1e04483a9ec76baf2012e9d01c15904efe09be86458b6bc56d8f4b9a69542` |
+  | `HyperSense64 CLASSIC HXG SIGNED.exe` | 1,852,920 | `CN=HYPERSENSEGLOBALT` | `eb3764631f6d314f88271af0c039989307cc5da2ed9dc65e1a3cc7938f278a4a` |
+
+### Changed
+- `build.bat` takes an optional `classic` argument and compiles the flavour-specific resource
+  (`res\resource_classic.o`); the default GUI build is unchanged for callers.
+- `report_fp.ps1` defaults to `HXG SIGNED\HyperSense64 HXG SIGNED.exe`, the file that ships.
+
 ## [1.0.1.1] — 2026-10-28
 
 ### Signed build

@@ -1,10 +1,10 @@
-# What's new — `1.0.1.1` vs the last public build (`1.0.1`)
+# What's new — `v1.0.2` vs the last public build (`v1.0.1`)
 
 The public `1.0.1` build was the sidebar GUI with a single live log. Everything below is what
 this build adds or changes. The full item-by-item history is in
 [`CHANGELOG.md`](../CHANGELOG.md).
 
-| Area | `1.0.1` (old) | `1.0.1.1` (this build) |
+| Area | `1.0.1` (old) | `1.0.2` (this build) |
 | --- | --- | --- |
 | Log area | one live output pane | **`OUTPUT` / `COMMAND` / `DETAILS`** tabs; the log keeps streaming while another tab is in front |
 | Help | none | **tooltip on every control** — buttons, modes, filters, fields, output, shortcuts |
@@ -23,10 +23,11 @@ this build adds or changes. The full item-by-item history is in
 | Ctrl+click | `GetKeyState` / `GetAsyncKeyState` polling | `MK_CONTROL` from the mouse message |
 | SHA-256 (VirusTotal) | CryptoAPI (`CryptAcquireContext` / `CryptHashData`) | local FIPS 180-4 implementation, `src/sha256.h` |
 | RPC debug log | `%TEMP%\hypersense_rpc.log` | `hypersense_rpc.log` next to the executable |
-| File details | `1.0.0.0`, partial metadata | **`1.0.1.1`**, full Details tab: company, product, description, copyright, trademark, original filename, comments |
+| File details | `1.0.0.0`, partial metadata | **`1.0.2`**, full Details tab: company, product, description, copyright, trademark, original filename, comments |
 | Signature | none (unsigned) | **Authenticode-signed**, `CN=HYPERSENSEGLOBALT`, SHA-256, DigiCert RFC 3161 timestamp |
-| SecureAge | `Malicious` | `Malicious` (the only remaining flag on the unsigned build) |
-| Microsoft | `2/70` flag (`Program:Win32/Wacapew.Cml`) | **clean — 1/71 on VirusTotal** (unsigned build of the same code) |
+| Editions | one GUI exe | **GUI and CLASSIC** binaries, each shipped signed and unsigned — four downloads |
+| SecureAge | `Malicious` | `Malicious` (the only flag on the last scanned build) |
+| Microsoft | `2/70` flag (`Program:Win32/Wacapew.Cml`) | **clean — 1/71 on VirusTotal** on the last scanned build |
 
 ## Why the import table changed
 
@@ -46,15 +47,19 @@ Get-FileHash .\HyperSense64.exe -Algorithm SHA256
 Get-AuthenticodeSignature .\HyperSense64.exe | Format-List Status,@{n='SignedBy';e={$_.SignerCertificate.Subject}}
 ```
 
-The signed release binary — `HyperSense\HXG SIGNED\HyperSense64 HXG SIGNED LATEST.exe`:
+The four release files (`HyperSense/HXG SIGNED/`, version `1.0.2`):
 
-```
-SHA-256  108160ae2315ebe110cac9bca6156e1ddeb81677f857e21cff6f7067d7eb9d7c
-Size     1,853,096 bytes
-Signed   CN=HYPERSENSEGLOBALT (self-signed), SHA-256, DigiCert RFC 3161 timestamp
-```
+| File | Size | Signature | SHA-256 |
+| --- | --- | --- | --- |
+| `HyperSense64 -unsigned.exe` | 1,845,760 | none | `568a1b428ddf4e46529d503a2dcd4b25fbaac708ed8312e0da426201d31b5f7a` |
+| `HyperSense64 HXG SIGNED.exe` | 1,852,920 | `CN=HYPERSENSEGLOBALT` | `bcd48830528cb21166c4370c7a7e90b93e74ee12b0ede23d96e10fa15deb4df0` |
+| `HyperSense64 CLASSIC -unsigned.exe` | 1,845,760 | none | `53d1e04483a9ec76baf2012e9d01c15904efe09be86458b6bc56d8f4b9a69542` |
+| `HyperSense64 CLASSIC HXG SIGNED.exe` | 1,852,920 | `CN=HYPERSENSEGLOBALT` | `eb3764631f6d314f88271af0c039989307cc5da2ed9dc65e1a3cc7938f278a4a` |
 
-The signature is the only difference from the unsigned `a35eaa0e…` build: 6 bytes of PE
-checksum plus the certificate table, byte-identical everywhere else. A rebuild changes the
-SHA-256 — and, with Microsoft's cloud ML, the verdict. Ship the build you scanned; after
-signing, re-scan, because the hash is what the engines score.
+`build.bat` builds the GUI flavour (opens in the sidebar layout), `build.bat classic` builds
+`HyperSense64Classic.exe`, which opens in the `moneta64.exe`-style one-row layout
+(`READY - CLASSIC` in the status bar). Everything else is identical; the `CLASSIC MODE` toggle
+switches either build between the two layouts.
+
+A rebuild changes the SHA-256 — and, with Microsoft's cloud ML, the verdict. Ship the build you
+scanned; after signing, re-scan, because the hash is what the engines score.

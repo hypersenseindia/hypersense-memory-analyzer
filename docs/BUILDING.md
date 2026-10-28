@@ -25,8 +25,14 @@ pacman -S --needed mingw-w64-ucrt-x86_64-gcc
 
 ```bat
 cd HyperSense
-build.bat
+build.bat            :: GUI flavour      -> HyperSense64.exe
+build.bat classic    :: CLASSIC flavour  -> HyperSense64Classic.exe
 ```
+
+The classic flavour is the same program compiled with `-DHS_CLASSIC_DEFAULT`: it opens in the
+`moneta64.exe`-style one-row layout (`READY - CLASSIC`) instead of the sidebar. Its resource is
+built separately (`-DHS_CLASSIC_BUILD`) so the version block reports
+`OriginalFilename = HyperSense64Classic.exe` and `FileDescription = ... (x64, Classic UI)`.
 
 The script:
 
@@ -42,8 +48,10 @@ The script:
 Outputs:
 
 ```
-HyperSense\HyperSense64.exe    (build product)
-HyperSense64.exe               (copy, this is the file you ship)
+HyperSense\HyperSense64.exe         (GUI build product)
+HyperSense64.exe                    (copy, this is the file you ship)
+HyperSense\HyperSense64Classic.exe  (CLASSIC build product)
+HyperSense64Classic.exe             (copy)
 ```
 
 ## Verify the build

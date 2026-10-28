@@ -12,10 +12,10 @@ Typical report for this tool:
 | Microsoft | **clean** on the unsigned build of this code | earlier builds were scored `Program:Win32/Wacapew.Cml` (PUA) and `Trojan:Win32/Wacatac.C!ml` / `Wacatac.Biml` for the same code |
 | SecureAge | `Malicious` | generic static-ML verdict |
 
-Everything else comes back clean (1/71 on VirusTotal for the unsigned build), and the
+Everything else comes back clean (1/71 on VirusTotal for the last scanned build), and the
 Moneta engine it embeds is public GPLv3 source: <https://github.com/forrest-orr/moneta>.
-The released binary is the same code with an Authenticode signature added, so its hash —
-`108160ae…` — needs its own scan before anyone quotes a count for it.
+Version 1.0.2 ships four files — GUI and CLASSIC, each signed and unsigned — so every hash is
+new and each one needs its own scan before anyone quotes a count for it.
 
 > A 1/71 result is **not** evidence of malware, but it is worth fixing properly. Do **not**
 > try to "evade" it with packers, crypters, string obfuscation or anti-VM tricks - those
@@ -36,7 +36,7 @@ An Authenticode signature binds the file to a publisher identity. SmartScreen st
 it as anonymous, and AV vendors can whitelist the certificate instead of the hash.
 An **EV code-signing certificate** is the fastest route to SmartScreen reputation.
 
-The 1.0.1.1 release binary **is signed**: `CN=HYPERSENSEGLOBALT`, SHA-256, DigiCert RFC 3161
+The 1.0.2 release binaries **are signed**: `CN=HYPERSENSEGLOBALT`, SHA-256, DigiCert RFC 3161
 timestamp, `Get-AuthenticodeSignature` reports `Valid`. That certificate is **self-signed**,
 which is honest but local: machines that have not installed its root still show *Unknown
 publisher*, and no reputation accrues to it. Buying an OV/EV certificate from a CA and

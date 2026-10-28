@@ -145,17 +145,18 @@ A memory scanner opens other processes with `PROCESS_VM_READ`, walks `PEB`/`TEB`
 enables `SeDebugPrivilege` before a scan. Binaries doing that are regularly scored as
 PUA/hacktool by machine-learning engines.
 
-The current build is Authenticode-signed (`CN=HYPERSENSEGLOBALT`, SHA-256, timestamped). The
-unsigned build of exactly this code scores **1/71 on VirusTotal** — Microsoft clean, every
-other engine clean except SecureAge, which reports `Malicious` (a generic static-ML verdict). Signing changes the hash, so treat that scan as the baseline
-for the code, not for the signed file: re-scan `108160ae…` before quoting a number. Earlier
-builds were flagged by Microsoft as `Program:Win32/Wacapew.Cml` and
-`Trojan:Win32/Wacatac.C!ml`; the name moves between builds because it is a cloud ML score on
-the whole file, not a property of the source, so a rebuild is not a fix. The import table is
-kept deliberately boring for that reason — no clipboard, key-state or crypto-provider calls,
-and SHA-256 lives in `src/sha256.h`. If a scanner flags your copy, do **not** disable your
-antivirus — read **[docs/FALSE_POSITIVES.md](docs/FALSE_POSITIVES.md)**, which includes the
-submission text and the signing procedure. Ready-to-paste vendor forms live in
+Both flavours ship twice — Authenticode-signed (`CN=HYPERSENSEGLOBALT`, SHA-256, DigiCert
+timestamp) and unsigned. The last scanned build scores **1/71 on VirusTotal**: Microsoft
+clean, every other engine clean except SecureAge, which reports `Malicious` (a generic
+static-ML verdict). Version **1.0.2 changes the hashes**, so scan the file you are about to
+publish — do not carry that number over. Earlier builds were flagged by Microsoft as
+`Program:Win32/Wacapew.Cml` and `Trojan:Win32/Wacatac.C!ml`; the name moves between builds
+because it is a cloud ML score on the whole file, not a property of the source, so a rebuild is
+not a fix. The import table is kept deliberately boring for that reason — no clipboard,
+key-state or crypto-provider calls, and SHA-256 lives in `src/sha256.h`. If a scanner flags
+your copy, do **not** disable your antivirus — read
+**[docs/FALSE_POSITIVES.md](docs/FALSE_POSITIVES.md)**, which includes the submission text and
+the signing procedure. Ready-to-paste vendor forms live in
 **[docs/MICROSOFT_FP.txt](docs/MICROSOFT_FP.txt)** and
 **[docs/SECUREAGE_FP.txt](docs/SECUREAGE_FP.txt)**.
 
@@ -163,10 +164,17 @@ The signing certificate is **self-signed**, so on a machine that has not install
 Windows still shows *Unknown publisher*; a CA-issued OV/EV certificate is what removes that
 warning and carries real SmartScreen reputation.
 
-```
-SHA-256  108160ae2315ebe110cac9bca6156e1ddeb81677f857e21cff6f7067d7eb9d7c
-Size     1,853,096 bytes          Signed   CN=HYPERSENSEGLOBALT (self-signed)
-```
+The four release files (`HyperSense/HXG SIGNED/`):
+
+| File | Size | Signature | SHA-256 |
+| --- | --- | --- | --- |
+| `HyperSense64 -unsigned.exe` | 1,845,760 | none | `568a1b428ddf4e46529d503a2dcd4b25fbaac708ed8312e0da426201d31b5f7a` |
+| `HyperSense64 HXG SIGNED.exe` | 1,852,920 | `CN=HYPERSENSEGLOBALT` | `bcd48830528cb21166c4370c7a7e90b93e74ee12b0ede23d96e10fa15deb4df0` |
+| `HyperSense64 CLASSIC -unsigned.exe` | 1,845,760 | none | `53d1e04483a9ec76baf2012e9d01c15904efe09be86458b6bc56d8f4b9a69542` |
+| `HyperSense64 CLASSIC HXG SIGNED.exe` | 1,852,920 | `CN=HYPERSENSEGLOBALT` | `eb3764631f6d314f88271af0c039989307cc5da2ed9dc65e1a3cc7938f278a4a` |
+
+`CLASSIC` is the same program, built to open straight into the `moneta64.exe`-style one-row
+screen (`build.bat classic`); the toggle still switches either file between both layouts.
 
 ## Intended use
 
