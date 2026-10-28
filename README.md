@@ -149,6 +149,31 @@ build.bat
 Output: `HyperSense\HyperSense64.exe`, copied to the repository root. Full details,
 troubleshooting and the CI recipe are in **[docs/BUILDING.md](docs/BUILDING.md)**.
 
+## Verifying a build
+
+```powershell
+(Get-Item .\HyperSense64.exe).VersionInfo | Format-List CompanyName,ProductName,FileDescription,FileVersion,LegalCopyright,Comments
+Get-FileHash .\HyperSense64.exe -Algorithm SHA256
+Get-AuthenticodeSignature .\HyperSense64.exe | Format-List Status,@{n='SignedBy';e={$_.SignerCertificate.Subject}}
+```
+
+The four release files (`HyperSense/releases/1.0.2/`, version `1.0.2`):
+
+| File | Size | Signature | SHA-256 |
+| --- | --- | --- | --- |
+| `HyperSense64-unsigned.exe` | 1,845,760 | none | `568a1b428ddf4e46529d503a2dcd4b25fbaac708ed8312e0da426201d31b5f7a` |
+| `HyperSense64.exe` | 1,852,920 | `CN=HYPERSENSEGLOBALT` | `bcd48830528cb21166c4370c7a7e90b93e74ee12b0ede23d96e10fa15deb4df0` |
+| `HyperSense64Classic-unsigned.exe` | 1,845,760 | none | `53d1e04483a9ec76baf2012e9d01c15904efe09be86458b6bc56d8f4b9a69542` |
+| `HyperSense64Classic.exe` | 1,852,920 | `CN=HYPERSENSEGLOBALT` | `eb3764631f6d314f88271af0c039989307cc5da2ed9dc65e1a3cc7938f278a4a` |
+
+`build.bat` builds the GUI flavour (opens in the sidebar layout), `build.bat classic` builds
+`HyperSense64Classic.exe`, which opens in the `moneta64.exe`-style one-row layout
+(`READY - CLASSIC` in the status bar). Everything else is identical; the `CLASSIC MODE` toggle
+switches either build between the two layouts.
+
+A rebuild changes the SHA-256 — and, with Microsoft's cloud ML, the verdict. Ship the build you
+scanned; after signing, re-scan, because the hash is what the engines score.
+
 ## How it works
 
 ```
@@ -187,17 +212,9 @@ The signing certificate is **self-signed**, so on a machine that has not install
 Windows still shows *Unknown publisher*; a CA-issued OV/EV certificate is what removes that
 warning and carries real SmartScreen reputation.
 
-The four release files (`HyperSense/releases/1.0.2/`):
-
-| File | Size | Signature | SHA-256 |
-| --- | --- | --- | --- |
-| `HyperSense64-unsigned.exe` | 1,845,760 | none | `568a1b428ddf4e46529d503a2dcd4b25fbaac708ed8312e0da426201d31b5f7a` |
-| `HyperSense64.exe` | 1,852,920 | `CN=HYPERSENSEGLOBALT` | `bcd48830528cb21166c4370c7a7e90b93e74ee12b0ede23d96e10fa15deb4df0` |
-| `HyperSense64Classic-unsigned.exe` | 1,845,760 | none | `53d1e04483a9ec76baf2012e9d01c15904efe09be86458b6bc56d8f4b9a69542` |
-| `HyperSense64Classic.exe` | 1,852,920 | `CN=HYPERSENSEGLOBALT` | `eb3764631f6d314f88271af0c039989307cc5da2ed9dc65e1a3cc7938f278a4a` |
-
-`CLASSIC` is the same program, built to open straight into the `moneta64.exe`-style one-row
-screen (`build.bat classic`); the toggle still switches either file between both layouts.
+The four release files and their hashes are listed under
+**[Verifying a build](#verifying-a-build)**; the shipped bytes are the ones named in
+`SHA256SUMS.txt`.
 
 ## Intended use
 
